@@ -1,0 +1,11 @@
+data/data_scripts/__pycache__
+data/raw/airfoil/
+data/raw/concrete/
+data/raw/cycle/
+data/raw/electric/
+data/raw/news/
+data/raw/protein/
+data/raw/superconductivity/
+data/raw/winered/
+data/raw/winewhite/
+data/processed/
