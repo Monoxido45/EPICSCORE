@@ -27,11 +27,12 @@ To install the necessary dependencies and the EPICSCORE package, follow these st
 
 ## Running Real Data Experiments
 
-To run real data experiments, execute the following command to download and process all required data:
+To download and process all required data, execute the following command:
 ```bash
 bash data/data_scripts/download_data.sh
 ```
-To execute all experiments for quantile regression, run:
+
+To run all experiments for quantile regression, use the command:
 ```bash
 python Experiments_code/metrics_real_data.py
 ```
