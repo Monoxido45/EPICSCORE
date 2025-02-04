@@ -194,7 +194,6 @@ dependencies:
       - etuples==0.3.9
       - filelock==3.16.1
       - gdown==5.2.0
-      - glmnet-py==0.1.0b2
       - gpytorch==1.13
       - h5netcdf==1.4.1
       - h5py==3.12.1

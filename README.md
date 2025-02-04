@@ -28,6 +28,20 @@ To install the necessary dependencies and the EPICSCORE package, follow these st
     ```bash
     pip install .
     ```
+    
+Alternatively, if you use Poetry, follow these steps:
+
+1. Navigate to the directory containing the `setup.py` file.
+
+2. Initialize a new Poetry environment:
+    ```bash
+    poetry init
+    ```
+
+3. Add the required dependencies to the Poetry environment:
+    ```bash
+    xargs poetry add < requirements.txt
+    ```
 
 
 ## Running Real Data Experiments

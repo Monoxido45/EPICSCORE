@@ -470,7 +470,7 @@ def obtain_metrics_all_methods(
             }
             with open(f"checkpoint_{data_name}.pkl", "wb") as f:
                 pickle.dump(checkpoint, f)
-            print(f"Checkpoint salvo na iteração {i+1}")
+            print(f"Checkpoint saved in iteration {i+1}")
 
     # computing mean and standard deviation for each methods
     final_results = pd.concat(all_results)
@@ -487,7 +487,6 @@ def obtain_metrics_all_methods(
         .reset_index()
     )
 
-    # Remover arquivos de checkpoint
     for f in os.listdir("."):
         if f.startswith("checkpoint_") and f.endswith(".pkl"):
             os.remove(f)
