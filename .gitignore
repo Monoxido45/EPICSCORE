@@ -10,3 +10,5 @@ data/raw/winered/
 data/raw/winewhite/
 data/processed/
 Epistemic_CP/__pycache__
+Experiments_code/pickle_files
+Experiments_code/__pycache__

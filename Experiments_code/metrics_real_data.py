@@ -22,7 +22,6 @@ import torch
 from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C
 from sklearn.model_selection import train_test_split
 
-# UACQR function used from https://github.com/rrross/UACQR.git
 from uacqr import uacqr
 
 # from experiment import experiment
@@ -33,7 +32,6 @@ original_path = os.getcwd()
 folder_path = "/Experiments_code"
 
 # fixing random generator and torch seeds
-rng = np.random.default_rng(15)
 torch.manual_seed(0)
 torch.cuda.manual_seed(0)
 
@@ -117,7 +115,6 @@ def obtain_metrics_all_methods(
     gp_params,
     bart_params,
     uacqr_params,
-    rng,
     data_name="default",
     alpha=0.05,
     seed_initial=45,
@@ -213,7 +210,6 @@ def obtain_metrics_all_methods(
                 mdn_params,
                 gp_params,
                 bart_params,
-                rng=rng,
             )
         )
 
@@ -606,7 +602,6 @@ if __name__ == "__main__":
         bart_params,
         uacqr_params,
         alpha=alpha,
-        rng=rng,
         seed_initial=45,
         n_it=it,
         prop_train=0.5,

@@ -1,12 +1,37 @@
-# Uncertainty-Quantification-in-Neural-Networks-for-Conditional-Densities-via-Mixture-Models
+# Epistemic Conformal Score (EPICSCORE).
+Here we provide an implementation of EPICSCORE and notebooks to reproduce the figures and tables from the paper **Epistemic Uncertainty in Conformal Scores: A Unified Approach**.
 
-This work explores various techniques for quantifying uncertainty in neural networks, specifically in the context of conditional density estimation. By leveraging mixture models, the study focuses on how these models can capture and represent the uncertainty inherent in predictions, enabling a better understanding of the underlying distribution of outputs. Methods such as Monte Carlo dropout, ensemble learning, and Bayesian neural networks are examined to enhance the model's ability to handle uncertainty, especially when predicting complex, multimodal distributions. The use of mixture models offers a flexible approach to estimate conditional densities, incorporating uncertainty in both the data and model parameters.
+We demonstrate how to use our method on regression and quantile regression base models in two demo notebooks.
 
-# Instructions for Installing the Epistemic_CP Package
+## Installing Dependencies and Package
 
-Execute the following command in the terminal or prompt of command inside the directory that contains the `setup.py` file:
+To install the necessary dependencies and the EPICSCORE package, follow these steps:
 
+1. Navigate to the directory containing the `setup.py` file.
+
+2. Install the local conda environment with all dependencies by running the following command:
+    ```bash
+    conda env create -f EPICSCORE_env.yml
+    ```
+
+3. Activate the conda environment:
+    ```bash
+    conda activate EPICSCORE_env
+    ```
+
+4. Install the EPICSCORE package:
+    ```bash
+    pip install .
+    ```
+
+
+## Running Real Data Experiments
+
+To run real data experiments, execute the following command to download and process all required data:
 ```bash
-pip install .
-
-
+bash data/data_scripts/download_data.sh
+```
+To execute all experiments for quantile regression, run:
+```bash
+python Experiments_code/metrics_real_data.py
+```
