@@ -581,13 +581,6 @@ if __name__ == "__main__":
         gp_params["batch_size"] = 125
         gp_params["num_inducing_points"] = 50
 
-    if data_name == "blog":
-        mdn_params["patience"] = 30
-        gp_params["patience"] = 30
-        mdn_params["hidden_layers"] = [125]
-        mdn_params["batch_size"] = 150
-        gp_params["batch_size"] = 150
-
     if data_name == "WEC":
         mdn_params["batch_size"] = 250
         gp_params["batch_size"] = 250

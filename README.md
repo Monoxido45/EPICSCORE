@@ -9,6 +9,11 @@ To install the necessary dependencies and the EPICSCORE package, follow these st
 
 1. Navigate to the directory containing the `setup.py` file.
 
+2. Activate conda in the terminal
+    ```bash
+    source activate
+    ```
+
 2. Install the local conda environment with all dependencies by running the following command:
     ```bash
     conda env create -f EPICSCORE_env.yml
