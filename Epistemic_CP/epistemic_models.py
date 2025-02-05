@@ -577,18 +577,18 @@ class MDN_model(BaseEstimator):
                 pi_i = pi_i / pi_i.sum()
 
                 # sampling based on component
-                componente = rng.choice(n_comp, size=1, p=pi_i)
+                component = rng.choice(n_comp, size=1, p=pi_i)
 
                 if self.type == "gaussian":
                     sample[i, j] = rng.normal(
-                        mu_np[j, i, componente[0]], sigma_np[j, i, componente[0]]
+                        mu_np[j, i, component[0]], sigma_np[j, i, component[0]]
                     )
                 elif self.type == "gamma":
-                    alpha = mu_np[j, i, componente[0]] ** 2 / (
-                        sigma_np[j, i, componente[0]] ** 2
+                    alpha = mu_np[j, i, component[0]] ** 2 / (
+                        sigma_np[j, i, component[0]] ** 2
                     )
-                    beta = mu_np[j, i, componente[0]] / (
-                        sigma_np[j, i, componente[0]] ** 2
+                    beta = mu_np[j, i, component[0]] / (
+                        sigma_np[j, i, component[0]] ** 2
                     )
 
                     sample[i, j] = rng.gamma(shape=alpha, scale=1 / beta)
@@ -1136,6 +1136,10 @@ class BART_model(BaseEstimator):
         # changing splitting styles according to variables being binary or not
         binary_columns = [i for i in range(X.shape[1]) if np.unique(X[:, i]).size == 2]
 
+        if len(binary_columns) > 0:
+            X = X.astype(float)
+            self.type_X = True
+
         # making splitting list
         split_types = np.repeat(ContinuousSplitRule, repeats=X.shape[1])
         split_types[binary_columns] = OneHotSplitRule
@@ -1269,7 +1273,8 @@ class BART_model(BaseEstimator):
         Output:
         (i) cdf_array (numpy.ndarray): An array containing the CDF values for the test data.
         """
-
+        if self.type_X:
+            X_test = X_test.astype(float)
         if self.normalize_y:
             y_test = self.scaler_y.transform(y_test.reshape(-1, 1)).flatten()
 
@@ -1305,6 +1310,8 @@ class BART_model(BaseEstimator):
         Output:
         (i) cutoffs (array-like): Predicted cutoff values for the test data.
         """
+        if self.type_X:
+            X_test = X_test.astype(float)
 
         with self.model_bart:
             self.X_data.set_value(X_test)

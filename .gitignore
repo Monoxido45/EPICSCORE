@@ -13,3 +13,5 @@ Epistemic_CP/__pycache__
 Experiments_code/pickle_files
 Experiments_code/__pycache__
 Epistemic_CP.egg-info
+build/lib/
+build/
