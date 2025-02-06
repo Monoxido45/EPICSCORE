@@ -1139,6 +1139,8 @@ class BART_model(BaseEstimator):
         if len(binary_columns) > 0:
             X = X.astype(float)
             self.type_X = True
+        else:
+            self.type_X = False
 
         # making splitting list
         split_types = np.repeat(ContinuousSplitRule, repeats=X.shape[1])

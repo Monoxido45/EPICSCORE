@@ -123,6 +123,7 @@ def obtain_metrics_all_methods(
     gp_params,
     bart_params,
     rng,
+    data_name="default",
     is_fitted=True,
     alpha=0.1,
     seed_initial=45,
@@ -183,7 +184,10 @@ def obtain_metrics_all_methods(
         )
 
         # fitting base estimator
-        model = Net_reg(**base_params).fit(X_train.to_numpy(), y_train.to_numpy())
+        model = Net_reg(
+            input_dim=X_train.to_numpy().shape[1],
+            **base_params,
+        ).fit(X_train.to_numpy(), y_train.to_numpy())
 
         # Preparing Calibration and Test Data
         X_calib = X_calib.to_numpy()
@@ -324,17 +328,21 @@ def obtain_metrics_all_methods(
             pred_ecp_bart_test[:, 0],
             y_test,
         )
-        pcorr_reg_split = np.mean(
+        pcorr_reg_split = corr_coverage_widths(
             pred_reg_split[:, 1],
             pred_reg_split[:, 0],
             y_test,
         )
-        pcorr_weighted = np.mean(
+        pcorr_weighted = corr_coverage_widths(
             pred_weighted[:, 1],
             pred_weighted[:, 0],
             y_test,
         )
-        pcorr_mondrian = np.mean(pred_mondrian[:, 1], pred_mondrian[:, 0], y_test)
+        pcorr_mondrian = corr_coverage_widths(
+            pred_mondrian[:, 1],
+            pred_mondrian[:, 0],
+            y_test,
+        )
 
         # creating metric dataframe
         metric_result = pd.DataFrame(
@@ -459,7 +467,6 @@ bart_params = {
 }
 
 alpha = 0.1
-n_it = 50
 CHECKPOINT_INTERVAL = 10
 
 if __name__ == "__main__":
@@ -484,7 +491,7 @@ if __name__ == "__main__":
         return False
 
     # Load data for the specified dataset
-    data = pd.read_csv(original_path + folder_path + f"/data/{data_name}.csv")
+    data = pd.read_csv(original_path + f"/data/processed/{data_name}.csv")
     if data.shape[0] > 10000:
         mdn_params["batch_size"] = 125
         gp_params["batch_size"] = 125
@@ -513,8 +520,8 @@ if __name__ == "__main__":
 
     # Save metrics
     print(metrics)
-    metrics.to_csv(metrics_filename, index=False)
+    metrics.to_csv("reg_" + metrics_filename, index=False)
 
     # save all results
-    with open(f"all_metrics_{data_name}.pkl", "wb") as f:
+    with open(f"reg_all_metrics_{data_name}.pkl", "wb") as f:
         pickle.dump(all_results, f)

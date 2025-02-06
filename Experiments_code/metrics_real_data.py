@@ -497,10 +497,10 @@ def obtain_metrics_all_methods(
 catboost_params = {
     "iterations": 1000,
     "learning_rate": 1e-3,
-    "depth": 6,
-    "l2_leaf_reg": 3,
-    "random_strength": 1,
-    "bagging_temperature": 1,
+    "depth": 6,  # default value
+    "l2_leaf_reg": 3,  # default value
+    "random_strength": 1,  # default value
+    "bagging_temperature": 1,  # default value
     "od_type": "Iter",
     "od_wait": 50,
     "use_best_model": False,
