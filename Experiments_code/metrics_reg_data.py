@@ -328,11 +328,7 @@ def obtain_metrics_all_methods(
             pred_ecp_bart_test[:, 0],
             y_test,
         )
-        pcorr_reg_split = corr_coverage_widths(
-            pred_reg_split[:, 1],
-            pred_reg_split[:, 0],
-            y_test,
-        )
+
         pcorr_weighted = corr_coverage_widths(
             pred_weighted[:, 1],
             pred_weighted[:, 0],
@@ -347,7 +343,7 @@ def obtain_metrics_all_methods(
         # creating metric dataframe
         metric_result = pd.DataFrame(
             {
-                "Metodo": [
+                "Method": [
                     "ECP-MDN",
                     "ECP-GP",
                     "ECP-BART",
@@ -383,7 +379,7 @@ def obtain_metrics_all_methods(
                     pcorr_mdn,
                     pcorr_gp,
                     pcorr_bart,
-                    pcorr_reg_split,
+                    np.nan,
                     pcorr_weighted,
                     pcorr_mondrian,
                 ],
@@ -416,7 +412,6 @@ def obtain_metrics_all_methods(
         )
         .reset_index()
     )
-
     for f in os.listdir("."):
         if f.startswith("checkpoint_") and f.endswith(".pkl"):
             os.remove(f)

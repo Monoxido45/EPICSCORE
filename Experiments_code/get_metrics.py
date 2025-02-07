@@ -1,6 +1,7 @@
 # Code for generating all data results
 import pandas as pd
 import os
+import numpy as np
 
 original_path = os.getcwd()
 folder_path = "/Experiments_code/pickle_files/"
@@ -26,23 +27,24 @@ def read_metrics_files(file_names, metrics, idx, reg=False):
             data = pd.read_csv(file_path)
 
             # Filter the desired metrics in the 'Method' column
-            filtered_data = data[data["Metodo"].isin(metrics)]
+            filtered_data = data[data["Method"].isin(metrics)]
 
             # Add selected metrics to DataFrame
             for metric in metrics:
-                if metric in filtered_data["Metodo"].values:
-                    value_mean = filtered_data[filtered_data["Metodo"] == metric].iloc[
+                if metric in filtered_data["Method"].values:
+                    value_mean = filtered_data[filtered_data["Method"] == metric].iloc[
                         0, idx[0]
                     ]
-                    value_std = filtered_data[filtered_data["Metodo"] == metric].iloc[
+                    value_std = filtered_data[filtered_data["Method"] == metric].iloc[
                         0, idx[1]
                     ]
-                    value_std = 2 * float(value_std) / (50**0.5)
-                    value_mean, value_std = round(float(value_mean), 3), round(
-                        value_std, 3
-                    )
-                    value = f"{value_mean} ({value_std})"
-                    dataframe.loc[dataframe["Dataset"] == file_name, metric] = value
+                    if not pd.isnull(value_mean):
+                        value_std = 2 * float(value_std) / (50**0.5)
+                        value_mean, value_std = round(float(value_mean), 3), round(
+                            value_std, 3
+                        )
+                        value = f"{value_mean} ({value_std})"
+                        dataframe.loc[dataframe["Dataset"] == file_name, metric] = value
                 else:
                     dataframe.loc[dataframe["Dataset"] == file_name, metric] = None
 
@@ -127,6 +129,29 @@ result = read_metrics_files(file_names, metrics, [3, 4])
 # [mean_metric, sd_metric]
 print(result)
 
+# Regression results
+metrics = ["ECP-MDN", "ECP-BART", "ECP-GP", "mondrian", "reg-split", "weighted"]
+file_names = [
+    "airfoil",
+    "bike",
+    "concrete",
+    "cycle",
+    "electric",
+    "homes",
+    "meps19",
+    "protein",
+    "star",
+    "superconductivity",
+    "WEC",
+    "winered",
+    "winewhite",
+]
+
+res_list = save_all_res(file_names, metrics, reg=True)
+print(res_list)
+
+
+a = np.nan
 
 print(f"\\begin{{tabular}}{{l{'c' * len(metrics)}}}\\toprule")
 print("Dataset & " + " & ".join(metrics) + "\\\\\\midrule")

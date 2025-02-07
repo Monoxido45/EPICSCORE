@@ -420,7 +420,7 @@ def obtain_metrics_all_methods(
         # creating metric dataframe
         metric_result = pd.DataFrame(
             {
-                "Metodo": [
+                "Method": [
                     "ECP-MDN",
                     "ECP-GP",
                     "ECP-BART",
