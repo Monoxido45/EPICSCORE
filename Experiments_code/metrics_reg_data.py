@@ -401,7 +401,7 @@ def obtain_metrics_all_methods(
     # computing mean and standard deviation for each methods
     final_results = pd.concat(all_results)
     summary = (
-        final_results.groupby("Metodo")
+        final_results.groupby("Method")
         .agg(
             {
                 "Average Coverage": ["mean", "std"],
