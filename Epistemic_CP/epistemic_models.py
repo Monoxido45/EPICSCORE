@@ -458,7 +458,7 @@ class MDN_model(BaseEstimator):
 
         return quantile_matrix
 
-    # Calcular médias usando os parâmetros da mistura
+    # Computing means using the mixture parameters
     @staticmethod
     def mixture_mean(pi, mu):
         """

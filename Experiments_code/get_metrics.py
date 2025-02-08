@@ -49,7 +49,7 @@ def read_metrics_files(file_names, metrics, idx, reg=False):
                     dataframe.loc[dataframe["Dataset"] == file_name, metric] = None
 
         except FileNotFoundError:
-            print(f"Arquivo {file_path} não encontrado.")
+            print(f"File {file_path} not found.")
     return dataframe
 
 
