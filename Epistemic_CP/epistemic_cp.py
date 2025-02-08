@@ -222,7 +222,7 @@ class ECP_split(BaseEstimator):
             )
 
         elif epistemic_model == "GP_variational":
-            # Inicializando o modelo GP variacional
+            #Initializing the variational GP model
             self.epistemic_obj = GPApprox_model(
                 num_inducing_points=kwargs.get("num_inducing_points", 100),
                 lr_variational=kwargs.get("lr_variational", 0.1),
@@ -231,7 +231,7 @@ class ECP_split(BaseEstimator):
                 log_y=log_y,
             )
 
-            # Treinando o modelo com os dados de calibração
+            # Training the model with calibration data
             self.epistemic_obj.fit(
                 X_calib_train,
                 scores_calib_train,
@@ -243,12 +243,12 @@ class ECP_split(BaseEstimator):
                 verbose=kwargs.get("verbose", 0),
             )
 
-            # Calculando os novos scores cumulativos não conformes (s_prime)
+            # Computing the new nonconformity cumulative scores (s_prime)
             s_prime_calibration = self.epistemic_obj.predict_cdf(
                 X_calib_test, y_test=scores_calib_test
             )
 
-            # Determinando o ponto de corte t_cutoff com base em quantis
+            # Determining the cutoff point t_cutoff based on quantiles
             n = s_prime_calibration.shape[0]
             self.t_cutoff = np.quantile(
                 s_prime_calibration, np.ceil((n + 1) * (1 - self.alpha)) / n
