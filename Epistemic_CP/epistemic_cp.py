@@ -27,7 +27,7 @@ from Epistemic_CP.epistemic_models import (
 
 class ECP_split(BaseEstimator):
     """
-    Epistemic Conformal Prediction class.
+    General Epistemic Conformal Prediction class applied to any continuous or approximately continuous conformity scores.
     """
 
     def __init__(
@@ -222,7 +222,7 @@ class ECP_split(BaseEstimator):
             )
 
         elif epistemic_model == "GP_variational":
-            #Initializing the variational GP model
+            # Initializing the variational GP model
             self.epistemic_obj = GPApprox_model(
                 num_inducing_points=kwargs.get("num_inducing_points", 100),
                 lr_variational=kwargs.get("lr_variational", 0.1),
@@ -387,6 +387,193 @@ class ECP_split(BaseEstimator):
             ensemble=ensemble,
         )
         return pred
+
+
+class ECP_classification(BaseEstimator):
+    """
+    Epistemic Conformal Prediction class specialized for classification problems.
+    """
+
+    def __init__(
+        self,
+        nc_score,
+        base_model,
+        alpha,
+        is_fitted=False,
+        base_model_type=None,
+        **kwargs,
+    ):
+        """
+        Input: (i) nc_score (Scores class): Conformity score of choosing. It
+                can be specified by instantiating a conformal score class based on the Scores basic class.
+               (ii) base_model (BaseEstimator class): Base model with fit and predict methods to be embedded in the conformity score class.
+               (iii) alpha (float): Float between 0 and 1 specifying the miscoverage level of resulting prediction region.
+               (iv) base_model_type (bool): Boolean indicating whether the base model ouputs quantiles or not. Default is False.
+               (v) is_fitted (bool): Whether the base model is already fitted or not. Default is False.
+               (vi) **kwargs: Additional keyword arguments passed to fit base_model.
+        """
+        self.base_model_type = base_model_type
+        self.is_fitted = is_fitted
+        if ("Quantile" in str(nc_score)) or (base_model_type == True):
+            self.nc_score = nc_score(
+                base_model, is_fitted=is_fitted, alpha=alpha, **kwargs
+            )
+        else:
+            self.nc_score = nc_score(base_model, is_fitted=is_fitted, **kwargs)
+
+        # checking if base model is fitted
+        self.base_model = self.nc_score.base_model
+        self.alpha = alpha
+
+    def fit(
+        self,
+        X,
+        y,
+        bayes_model="BART",
+        random_seed_fit=45,
+        N_samples_MC=500,
+        n_cores=6,
+        progress=False,
+        **kwargs,
+    ):
+        """
+        Fit the base model embeded in the conformal score class to the training set and the predictive probability for each class y.
+        --------------------------------------------------------
+
+        Input: (i)    X: Training numpy feature matrix
+            (ii)   y: Training label array
+            (iii) bayes_model: Bayesian approach to fit the predictive probability for y.
+
+        Output: LocartSplit object
+        """
+        # fitting original classification non-conformity score
+        self.nc_score.fit(X, y)
+
+        # fitting predictive distribution for y
+        if bayes_model == "BART":
+            self.pred_model = BART_model(
+                m=kwargs.get("m", 100),
+                type="categorical",
+                var="None",
+                alpha=kwargs.get("alpha", 0.95),
+                beta=kwargs.get("beta", 2),
+                response=kwargs.get("response", "constant"),
+                split_prior=kwargs.get("split_prior", None),
+                separate_trees=kwargs.get("separate_trees", False),
+                n_cores=n_cores,
+                normalize_y=False,
+                progressbar=progress,
+            )
+
+            self.pred_model.fit(
+                X=X, y=y, n_sample=N_samples_MC, random_seed=random_seed_fit
+            )
+
+        return self
+
+    # TODO: Implement proper calib method for classification like APS
+    def calib(
+        self,
+        X_calib,
+        y_calib,
+        random_seed=1250,
+        random_seed_fit=45,
+        split_calib=True,
+        epistemic_test_thres=2000,
+        N_samples_MC=500,
+        ensemble=False,
+        n_cores=6,
+        progress=False,
+        **kwargs,
+    ):
+        """
+        Calibrate conformity score using Predictive distribution.
+        --------------------------------------------------------
+        Input:
+            (i) X_calib (np.ndarray): Calibration numpy feature matrix
+            (ii) y_calib (np.ndarray): Calibration label array
+            (iii) random_seed (int): Random seed used for data splitting for fit epistemic modeling of the conformal scores. Default is 1250.
+            (iv) random_seed_fit (int): Random seed used for fitting the epistemic model. Default is 45.
+            (v) split_calib (bool): Whether to split the calibration data into training and testing sets. Default is True.
+            (vi) epistemic_test_thres (int): Threshold to determine the test size for epistemic model. Default is 2000.
+            (vii) N_samples_MC (int): Number of Monte Carlo samples for BART model. Default is 500.
+            (viii) normalize_y (bool): Whether to normalize the conformity score. Default is False.
+            (ix) ensemble (bool): Whether the base model outputs three statistics (quantiles and median) or not. Default is False.
+            (x) n_cores (int): Number of cores to use for parallel processing. Default is 6.
+            (xi) progress (bool): Whether to print BART MCMC progress. Default is False.
+            (xii) **kwargs: Additional keyword arguments passed to epistemic model fitting step.
+        Output:
+            float: Vector of cutoffs.
+        """
+        # computing the classification scores
+        scores = self.nc_score.compute(X_calib, y_calib, ensemble=ensemble)
+
+        if X_calib.shape[0] >= epistemic_test_thres:
+            epistemic_test_size = 1000 / X_calib.shape[0]
+        else:
+            epistemic_test_size = 0.3
+
+        # splitting calibration into a training set and a cutoff set
+        if split_calib:
+            (
+                X_calib_train,
+                X_calib_test,
+                scores_calib_train,
+                scores_calib_test,
+            ) = train_test_split(
+                X_calib,
+                scores,
+                test_size=epistemic_test_size,
+                random_state=random_seed,
+            )
+        else:
+            (
+                X_calib_train,
+                X_calib_test,
+                scores_calib_train,
+                scores_calib_test,
+            ) = (
+                X_calib,
+                X_calib,
+                scores,
+                scores,
+            )
+
+        # fitting specific epistemic model for categorical variable
+        self.epistemic_obj = BART_model(
+            m=kwargs.get("m", 100),
+            type=kwargs.get("type", "normal"),
+            var=kwargs.get("var", "heteroscedastic"),
+            alpha=kwargs.get("alpha", 0.95),
+            beta=kwargs.get("beta", 2),
+            response=kwargs.get("response", "constant"),
+            split_prior=kwargs.get("split_prior", None),
+            separate_trees=kwargs.get("separate_trees", False),
+            n_cores=n_cores,
+            normalize_y=False,
+            progressbar=progress,
+        )
+
+        # Obtaining MCMC samples for BART
+        self.epistemic_obj.fit(
+            X_calib_train,
+            scores_calib_train,
+            n_sample=N_samples_MC,
+            random_seed=random_seed_fit,
+        )
+
+        # computing new cumulative scores
+        s_prime_calibration = self.epistemic_obj.predict_cdf(
+            X_calib_test, y_test=scores_calib_test, random_seed=random_seed_fit
+        )
+
+        # determining new cutoff point
+        n = s_prime_calibration.shape[0]
+        self.t_cutoff = np.quantile(
+            s_prime_calibration, np.ceil((n + 1) * (1 - self.alpha)) / n
+        )
+
+        return self.t_cutoff
 
 
 class QuantileSplit(BaseEstimator):
