@@ -1261,7 +1261,74 @@ class BART_model(BaseEstimator):
                         progressbar=self.progressbar,
                     )
             self.model_bart = model_bart
+
+        # categorical regression for cases like APS
+        elif self.type == "categorical":
+            # treating categorical data accordingly
+            # converting y to integer
+            if y.dtype != np.int64:
+                y = y.astype(np.int64)
+            n_cat = np.unique(y).shape[0]
+
+            # fitting model
+            with pm.Model() as model_bart:
+                self.X_data = pm.Data("data_X", X)
+                mu = pmb.BART(
+                    "mu", self.X_data, y, m=self.m, shape=(n_cat, self.X_data.shape[0])
+                )
+
+                theta = pm.Deterministic("theta_obs", pm.math.softmax(mu, axis=0))
+
+                # Likelihood (sampling distribution) of observations
+                y_obs = pm.Categorical("y_obs", p=theta.T, observed=y)
+
+                # running MCMC in the training sample
+                self.mc_sample = pm.sample(
+                    n_sample,
+                    chains=self.n_chains,
+                    random_seed=random_seed,
+                    cores=self.n_cores,
+                    progressbar=self.progressbar,
+                )
+            self.model_bart = model_bart
         return self
+
+    def predict_pmf(self, X_test, random_seed=0):
+        """
+        Predict the probability mass function (PMF) for the given test data.
+
+        Input:
+        (i) X_test (array-like): The input features for the test data.
+        (ii) y_test (array-like): The true target values for the test data.
+        (iii) random_seed (int, optional): The random seed for reproducibility of the posterior predictive sampling. Default is 0.
+
+        Output:
+        (i) pmf_array (numpy.ndarray): An array containing the PMF values for the test data, with rows indicating the samples and columns indicating the classes.
+        """
+        if self.type_X:
+            X_test = X_test.astype(float)
+
+        with self.model_bart:
+            self.X_data.set_value(X_test)
+            posterior_predictive_test = pm.sample_posterior_predictive(
+                trace=self.mc_sample,
+                random_seed=random_seed,
+                var_names=["theta_obs"],
+                predictions=True,
+                progressbar=True,
+            )
+
+        pred_sample = (
+            az.extract(
+                posterior_predictive_test,
+                group="predictions",
+                var_names=["theta_obs"],
+            )
+            .mean("sample")
+            .T.to_numpy()
+        )
+
+        return pred_sample
 
     def predict_cdf(self, X_test, y_test, random_seed=0):
         """
