@@ -230,10 +230,10 @@ class APSScore(Scores):
         ).cumsum(axis=1)
 
         cal_scores = np.take_along_axis(
-                cal_srt,
-                cal_pi.argsort(axis=1),
-                axis=1,
-            )[range(n), y_calib]
+            cal_srt,
+            cal_pi.argsort(axis=1),
+            axis=1,
+        )[range(n), y_calib]
         return cal_scores
 
     def predict(self, X_test, cutoff, ensemble=False):
@@ -264,10 +264,8 @@ class APSScore(Scores):
         else:
             test_pi = pred_probs.argsort(1)[:, ::-1]
             test_score = np.take_along_axis(pred_probs, test_pi, axis=1).cumsum(axis=1)
-                
-            test_score = np.take_along_axis(pred_probs, test_pi, axis=1).cumsum(
-                axis=1
-            )
+
+            test_score = np.take_along_axis(pred_probs, test_pi, axis=1).cumsum(axis=1)
             prediction_sets = np.take_along_axis(
                 test_score <= cutoff, test_pi.argsort(axis=1), axis=1
             )

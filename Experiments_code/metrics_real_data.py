@@ -196,11 +196,6 @@ def obtain_metrics_all_methods(
         X_test = X_test.to_numpy()
         y_test = y_test.to_numpy()
 
-        if model_str == "nnet":
-            ensemble = True
-        else:
-            ensemble = False
-
         # fitting the different ECP methods
         ecp_obj = ECP_split(
             QuantileScore,
@@ -221,7 +216,7 @@ def obtain_metrics_all_methods(
                 mdn_params,
                 gp_params,
                 bart_params,
-                ensemble=ensemble,
+                ensemble=False,
             )
         )
 
@@ -593,8 +588,11 @@ if __name__ == "__main__":
     data_name = input(
         "Which dataset would you like to use (e.g., 'bike' or 'winewhite')? "
     )
-    metrics_filename = input(
-        "Enter the filename to save metrics (e.g., 'metrics_bike.csv'): "
+    metrics_filename = (
+        input("Enter the filename to save metrics (e.g., 'metrics_bike'): ")
+        + "_"
+        + model
+        + ".csv"
     )
     it = int(input("How many iterations? "))
 
