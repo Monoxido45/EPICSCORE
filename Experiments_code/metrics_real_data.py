@@ -186,6 +186,11 @@ def obtain_metrics_all_methods(
             uacqrs_agg=uacqr_params["uacqrs_agg"],
         )
 
+        if model == "nnet":
+            X_train = X_train.astype(float)
+            X_calib = X_calib.astype(float)
+            X_test = X_test.astype(float)
+
         uacqr_results.fit(X_train, y_train)
         uacqr_results.calibrate(X_calib, y_calib)
         uacqr_pred_test = uacqr_results.predict_uacqr(X_test)
@@ -516,9 +521,9 @@ catboost_params = {
 
 # adding quantile neural network parameters
 nnet_params = {
-    "dropout": 0.05,
-    "epochs": 150,
-    "hidden_size": 200,
+    "dropout": 0.01,
+    "epochs": 100,
+    "hidden_size": 150,
     "lr": 1e-3,
     "batch_size": 32,
     "normalize": True,

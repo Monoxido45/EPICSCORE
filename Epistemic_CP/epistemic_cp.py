@@ -476,15 +476,8 @@ class ECP_classification(BaseEstimator):
         self,
         X_calib,
         y_calib,
-        random_seed=1250,
         random_seed_fit=45,
-        split_calib=True,
-        epistemic_test_thres=2000,
-        N_samples_MC=500,
         ensemble=False,
-        n_cores=6,
-        progress=False,
-        **kwargs,
     ):
         """
         Calibrate conformity score using Predictive distribution.
@@ -492,88 +485,73 @@ class ECP_classification(BaseEstimator):
         Input:
             (i) X_calib (np.ndarray): Calibration numpy feature matrix
             (ii) y_calib (np.ndarray): Calibration label array
-            (iii) random_seed (int): Random seed used for data splitting for fit epistemic modeling of the conformal scores. Default is 1250.
-            (iv) random_seed_fit (int): Random seed used for fitting the epistemic model. Default is 45.
-            (v) split_calib (bool): Whether to split the calibration data into training and testing sets. Default is True.
-            (vi) epistemic_test_thres (int): Threshold to determine the test size for epistemic model. Default is 2000.
-            (vii) N_samples_MC (int): Number of Monte Carlo samples for BART model. Default is 500.
-            (viii) normalize_y (bool): Whether to normalize the conformity score. Default is False.
-            (ix) ensemble (bool): Whether the base model outputs three statistics (quantiles and median) or not. Default is False.
-            (x) n_cores (int): Number of cores to use for parallel processing. Default is 6.
-            (xi) progress (bool): Whether to print BART MCMC progress. Default is False.
-            (xii) **kwargs: Additional keyword arguments passed to epistemic model fitting step.
+            (iii) random_seed_fit (int): Random seed used for fitting the epistemic model. Default is 45.
+            (iv) ensemble (bool): Whether the base model outputs three statistics (quantiles and median) or not. Default is False.
+
         Output:
             float: Vector of cutoffs.
         """
-        # computing the classification scores
-        scores = self.nc_score.compute(X_calib, y_calib, ensemble=ensemble)
-
-        if X_calib.shape[0] >= epistemic_test_thres:
-            epistemic_test_size = 1000 / X_calib.shape[0]
-        else:
-            epistemic_test_size = 0.3
-
-        # splitting calibration into a training set and a cutoff set
-        if split_calib:
-            (
-                X_calib_train,
-                X_calib_test,
-                scores_calib_train,
-                scores_calib_test,
-            ) = train_test_split(
-                X_calib,
-                scores,
-                test_size=epistemic_test_size,
-                random_state=random_seed,
-            )
-        else:
-            (
-                X_calib_train,
-                X_calib_test,
-                scores_calib_train,
-                scores_calib_test,
-            ) = (
-                X_calib,
-                X_calib,
-                scores,
-                scores,
-            )
-
-        # fitting specific epistemic model for categorical variable
-        self.epistemic_obj = BART_model(
-            m=kwargs.get("m", 100),
-            type=kwargs.get("type", "normal"),
-            var=kwargs.get("var", "heteroscedastic"),
-            alpha=kwargs.get("alpha", 0.95),
-            beta=kwargs.get("beta", 2),
-            response=kwargs.get("response", "constant"),
-            split_prior=kwargs.get("split_prior", None),
-            separate_trees=kwargs.get("separate_trees", False),
-            n_cores=n_cores,
-            normalize_y=False,
-            progressbar=progress,
+        # computing the original classification scores for existing y
+        cal_order = self.nc_score.compute(
+            X_calib, y_calib, ensemble=ensemble, return_ordering=True
         )
 
-        # Obtaining MCMC samples for BART
-        self.epistemic_obj.fit(
-            X_calib_train,
-            scores_calib_train,
-            n_sample=N_samples_MC,
-            random_seed=random_seed_fit,
+        # computing predictive probabilities for each class
+        predictive_y = self.epistemic_obj.predict_pmf(
+            X_calib, random_seed=random_seed_fit
         )
 
-        # computing new cumulative scores
-        s_prime_calibration = self.epistemic_obj.predict_cdf(
-            X_calib_test, y_test=scores_calib_test, random_seed=random_seed_fit
+        pred_srt = np.take_along_axis(
+            predictive_y,
+            cal_order,
+            axis=1,
+        ).cumsum(axis=1)
+
+        new_score = np.take_along_axis(
+            pred_srt,
+            cal_order.argsort(axis=1),
+            axis=1,
+        )[range(n), y_calib]
+
+        # determining cutoff
+        n = predictive_y.shape[0]
+        self.cutoff = np.quantile(new_score, np.ceil((n + 1) * (1 - self.alpha)) / n)
+
+        return self.cutoff
+
+    def predict(
+        self,
+        X_test,
+        random_seed=45,
+    ):
+        """
+        Predict 1 - alpha prediction regions for each test sample using epistemic cutoffs.
+        --------------------------------------------------------
+        Input: (i) X_test (np.ndarray): Test numpy feature matrix
+               (ii) N_samples_MC (int): Number of samples to simulate from MC dropout. Default is 500.
+               (iii) random_seed (int): Random seed fixed to generate samples. Used in MC dropout and BART.
+               (iv) ensemble (bool): Whether the base model outputs three statistics (quantiles and median) or not. Default is False.
+
+        Output: Prediction regions for each test sample.
+        """
+        # obtaining original score order
+        pred_probs = self.nc_score.base_model.predict_proba(X_test)
+        # ordering each class according to probability
+        test_pi = pred_probs.argsort(1)[:, ::-1]
+
+        # obtaining predictive distribution
+        predictive_y = self.epistemic_obj.predict_pmf(X_test, random_seed=random_seed)
+
+        # using APS order to derive new conformal score
+        test_score = np.take_along_axis(predictive_y, test_pi, axis=1).cumsum(axis=1)
+
+        prediction_sets = np.take_along_axis(
+            np.less_equal(test_score, self.cutoff),
+            test_pi.argsort(axis=1),
+            axis=1,
         )
 
-        # determining new cutoff point
-        n = s_prime_calibration.shape[0]
-        self.t_cutoff = np.quantile(
-            s_prime_calibration, np.ceil((n + 1) * (1 - self.alpha)) / n
-        )
-
-        return self.t_cutoff
+        return prediction_sets
 
 
 class QuantileSplit(BaseEstimator):
