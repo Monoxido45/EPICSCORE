@@ -665,6 +665,294 @@ class MDN_model(BaseEstimator):
         return quantiles
 
 
+#### Neural Network Classifier Base Architecture
+class NN_base(nn.Module):
+    def __init__(self, input_shape, num_classes, hidden_layers, dropout_rate=0.4):
+        """
+        Flexible NN architecture for classification
+
+        Input: (i) input_shape (int): Input dimension.
+               (ii) num_classes (int): Number of output classes.
+               (iii) hidden_layers (list): List containing the number of neurons per hidden layer.
+               (iv) dropout_rate (float): Dropout rate applied to each layer. Default is 0.4.
+        """
+        super(NN_base, self).__init__()
+        self.layers = nn.ModuleList()
+        self.batch_norms = nn.ModuleList()
+        self.dropouts = nn.ModuleList()
+
+        # Creating hidden layers dynamically
+        prev_units = input_shape
+        for units in hidden_layers:
+            self.layers.append(nn.Linear(prev_units, units))
+            self.batch_norms.append(nn.BatchNorm1d(units))
+            self.dropouts.append(nn.Dropout(dropout_rate))
+            prev_units = units
+
+        self.fc_out = nn.Linear(prev_units, num_classes)
+
+    def forward(self, x):
+        for layer, bn, dropout in zip(self.layers, self.batch_norms, self.dropouts):
+            x = F.relu(layer(x))
+            x = bn(x)
+            x = dropout(x)
+        x = self.fc_out(x)
+        return x
+
+
+#### MC Dropout Classifier
+class MC_classifier(BaseEstimator):
+    """
+    Monte Carlo Dropout Classifier.
+    """
+
+    def __init__(
+        self,
+        input_shape,
+        num_classes,
+        hidden_layers=[64],
+        dropout_rate=0.4,
+    ):
+        """
+        Input: (i) input_shape: Input dimension.
+               (ii) num_classes: Number of output classes.
+               (iii) hidden_layers: List containing the number of neurons in each hidden layer. The length of the list determines the amount of hidden layers in the model.
+               (iv) dropout_rate: Dropout Rate for each hidden layer. Default is 0.4.
+        """
+        self.input_shape = input_shape
+        self.num_classes = num_classes
+        self.hidden_layers = hidden_layers
+        self.dropout_rate = dropout_rate
+        self.model = NN_base(
+            self.input_shape, self.num_classes, self.hidden_layers, self.dropout_rate
+        )
+
+    def fit(
+        self,
+        X,
+        y,
+        proportion_train=0.7,
+        epochs=500,
+        lr=0.001,
+        gamma=0.99,
+        batch_size=32,
+        step_size=5,
+        weight_decay=0,
+        verbose=0,
+        patience=30,
+        scale=False,
+        random_seed_split=0,
+        random_seed_fit=1250,
+    ):
+        """
+        Fit MC Dropout Classifier.
+
+        Input: (i) X (np.ndarray or torch.Tensor): Training input data.
+               (ii) y (np.ndarray or torch.Tensor): Training target data.
+               (iii) proportion_train (float): Proportion of data to be used for training (the rest for validation). Default is 0.7.
+               (iv) epochs (int): Number of epochs for training. Default is 500.
+               (v) lr (float): Learning rate for the optimizer. Default is 0.001.
+               (vi) gamma (float): Gamma value for scheduler. Default is 0.99
+               (vii) batch_size (int): Batch size. Default is 32.
+               (viii) step_size (int): Step size for scheduler. Default is 5.
+               (ix) weight_decay (float): Optimizer weight decay parameter. Default is 0.
+               (x) verbose (int): Verbosity level (0, 1, or 2). If set to 0, does not print anything, if 1, prints the average loss of each epoch and if 2, prints the model learning curve at end of fitting.
+               (xi) patience (int): Number of epochs with no improvement to trigger early stopping. Default is 30.
+               (xii) scale (bool): Whether to scale or not the data. Default is False.
+               (xiii) random_seed_split (int): Random seed fixed to perform data splitting. Default is 0.
+               (xiv) random_seed_fit (int): Random seed fixed to model fitting. Default is 1250.
+
+        Output: (i) fitted MC_classifier object
+        """
+        self.optimizer = optim.Adamax(
+            self.model.parameters(), lr=lr, weight_decay=weight_decay
+        )
+        self.scheduler = optim.lr_scheduler.StepLR(
+            self.optimizer, step_size=step_size, gamma=gamma
+        )
+
+        # Splitting data into train and validation
+        x_train, x_val, y_train, y_val = train_test_split(
+            X, y, test_size=1 - proportion_train, random_state=random_seed_split
+        )
+
+        # checking if scaling is needed
+        if scale:
+            self.scaler = StandardScaler()
+            self.scaler.fit(x_train)
+            x_train = self.scaler.transform(x_train)
+            x_val = self.scaler.transform(x_val)
+            self.scale = True
+        else:
+            self.scale = False
+
+        # checking if is an instance of numpy
+        if isinstance(X, np.ndarray) or isinstance(y, np.ndarray):
+            x_train, x_val = (
+                torch.tensor(x_train, dtype=torch.float32),
+                torch.tensor(x_val, dtype=torch.float32),
+            )
+            y_train, y_val = (
+                torch.tensor(y_train, dtype=torch.float32).view(-1, 1),
+                torch.tensor(y_val, dtype=torch.float32).view(-1, 1),
+            )
+
+        # Training and validation
+        train_dataset = TensorDataset(
+            x_train.clone().detach().float(),
+            (
+                y_train.clone().detach().float()
+                if isinstance(y_train, torch.Tensor)
+                else torch.tensor(y_train, dtype=torch.float32)
+            ),
+        )
+        val_dataset = TensorDataset(
+            x_val.clone().detach().float(),
+            (
+                y_val.clone().detach().float()
+                if isinstance(y_val, torch.Tensor)
+                else torch.tensor(y_val, dtype=torch.float32)
+            ),
+        )
+
+        # Setting batch size
+        batch_size_train = int(proportion_train * batch_size)
+        batch_size_val = int((1 - proportion_train) * batch_size)
+        train_loader = DataLoader(
+            train_dataset, batch_size=batch_size_train, shuffle=True
+        )
+        val_loader = DataLoader(val_dataset, batch_size=batch_size_val, shuffle=False)
+
+        losses_train = []
+        losses_val = []
+
+        # early stopping
+        best_val_loss = float("inf")
+        counter = 0
+
+        torch.manual_seed(random_seed_fit)
+        torch.cuda.manual_seed(random_seed_fit)
+        # Training loop
+        for epoch in tqdm(range(epochs), desc="Fitting MC Dropout Classifier"):
+            self.model.train()
+            train_loss_epoch = 0
+
+            # Looping through batches
+            for x_batch, y_batch in train_loader:
+                self.optimizer.zero_grad()
+                output_train = self.model(x_batch)  # Network output
+                loss_train = F.cross_entropy(output_train, y_batch.long().view(-1))
+                loss_train.backward()
+                self.optimizer.step()
+                train_loss_epoch += loss_train.item()
+
+            # Computing validation loss
+            self.model.eval()
+            val_loss_epoch = 0
+            with torch.no_grad():
+                for x_batch, y_batch in val_loader:
+                    output_val = self.model(x_batch)  # Network output
+                    loss_val = F.cross_entropy(output_val, y_batch.long().view(-1))
+                    val_loss_epoch += loss_val.item()
+
+            # average loss by epoch
+            train_loss_epoch /= len(train_loader)
+            val_loss_epoch /= len(val_loader)
+            losses_train.append(train_loss_epoch)
+            losses_val.append(val_loss_epoch)
+
+            self.scheduler.step()
+
+            if verbose == 1:
+                print(
+                    f"Epoch {epoch}, Train Loss: {train_loss_epoch:.4f}, Validation Loss: {val_loss_epoch:.4f}"
+                )
+
+            # Early stopping
+            if val_loss_epoch < best_val_loss:
+                best_val_loss = val_loss_epoch
+                counter = 0
+            else:
+                counter += 1
+                if counter >= patience:
+                    print(
+                        f"Early stopping in epoch {epoch} with best validation loss: {best_val_loss:.4f}"
+                    )
+                    break
+
+        if verbose == 2:
+            fig, ax = plt.subplots()
+            ax.set_title("Training and Validation Loss")
+            ax.set_xlabel("Epoch")
+            ax.set_ylabel("Loss")
+
+            epochs_completed = len(losses_train)
+            ax.set_xlim(0, epochs_completed)
+
+            ax.plot(
+                range(epochs_completed), losses_train, label="Train Loss", color="blue"
+            )
+            ax.plot(
+                range(epochs_completed),
+                losses_val,
+                label="Validation Loss",
+                color="green",
+                linestyle="--",
+            )
+            plt.legend(loc="upper right")
+            plt.show()
+
+        return self
+
+    def predict_mc_dropout(self, x, num_samples=100, return_mean=False):
+        """
+        Make predictions with MC Dropout.
+
+        Input:
+            (i) x: Input data.
+            (ii) num_samples: Number of Monte Carlo samples. Default is 100.
+            (iii) return_mean: Whether to return the mean of the predictions. Default is False.
+
+        Output:
+            (i) Tuple containing the stacked tensors of the predictions or their means if return_mean is True.
+        """
+        if isinstance(x, np.ndarray):
+            if self.scale:
+                x = self.scaler.transform(x)
+            x = torch.tensor(x, dtype=torch.float32)
+
+        self.model.eval()
+        self.model.train()
+
+        predictions = []
+
+        for _ in range(num_samples):
+            with torch.no_grad():
+                pred = F.softmax(self.model(x), dim=1)
+                predictions.append(pred)
+
+        predictions = torch.stack(predictions)
+
+        if return_mean:
+            mean_predictions = torch.mean(predictions, dim=0)
+            return mean_predictions
+
+        return predictions
+
+    def predict_pmf(self, X_test, num_samples=100, random_seed=45):
+        probs = (
+            self.predict_mc_dropout(
+                X_test,
+                num_samples,
+                return_mean=True,
+            )
+            .detach()
+            .numpy()
+        )
+
+        return probs
+
+
 #### GP models
 # Basic GP model
 class GP_model(BaseEstimator):

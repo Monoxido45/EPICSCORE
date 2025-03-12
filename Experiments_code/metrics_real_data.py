@@ -521,9 +521,9 @@ catboost_params = {
 
 # adding quantile neural network parameters
 nnet_params = {
-    "dropout": 0.01,
-    "epochs": 100,
-    "hidden_size": 150,
+    "dropout": 0.05,
+    "epochs": 200,
+    "hidden_size": 200,
     "lr": 1e-3,
     "batch_size": 32,
     "normalize": True,

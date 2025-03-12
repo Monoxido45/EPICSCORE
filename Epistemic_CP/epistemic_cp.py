@@ -22,6 +22,7 @@ from Epistemic_CP.epistemic_models import (
     GP_model,
     GPApprox_model,
     BART_model,
+    MC_classifier,
 )
 
 
@@ -468,10 +469,31 @@ class ECP_classification(BaseEstimator):
             self.pred_model.fit(
                 X=X, y=y, n_sample=N_samples_MC, random_seed=random_seed_fit
             )
+        elif bayes_model == "MC_dropout":
+            self.pred_model = MC_classifier(
+                input_shape=X.shape[1],
+                num_classes=len(np.unique(y)),
+                dropout_rate=kwargs.get("dropout_rate", 0.5),
+                hidden_layers=kwargs.get("hidden_layers", [64, 64]),
+            )
+
+            self.pred_model.fit(
+                X=X,
+                y=y,
+                proportion_train=kwargs.get("proportion_train", 0.7),
+                epochs=kwargs.get("epochs", 1000),
+                lr=kwargs.get("lr", 0.001),
+                gamma=kwargs.get("gamma", 0.99),
+                weight_decay=kwargs.get("weight_decay", 0.001),
+                batch_size=kwargs.get("batch_size", 100),
+                patience=kwargs.get("patience", 30),
+                verbose=kwargs.get("verbose", 0),
+                scale=kwargs.get("scale", True),
+                random_seed_fit=random_seed_fit,
+            )
 
         return self
 
-    # TODO: Implement proper calib method for classification like APS
     def calib(
         self,
         X_calib,
@@ -497,10 +519,12 @@ class ECP_classification(BaseEstimator):
         )
 
         # computing predictive probabilities for each class
-        predictive_y = self.epistemic_obj.predict_pmf(
-            X_calib, random_seed=random_seed_fit
+        predictive_y = self.pred_model.predict_pmf(
+            X_calib,
+            random_seed=random_seed_fit,
         )
 
+        n = predictive_y.shape[0]
         pred_srt = np.take_along_axis(
             predictive_y,
             cal_order,
@@ -514,8 +538,10 @@ class ECP_classification(BaseEstimator):
         )[range(n), y_calib]
 
         # determining cutoff
-        n = predictive_y.shape[0]
-        self.cutoff = np.quantile(new_score, np.ceil((n + 1) * (1 - self.alpha)) / n)
+        self.cutoff = np.quantile(
+            new_score,
+            np.ceil((n + 1) * (1 - self.alpha)) / n,
+        )
 
         return self.cutoff
 
@@ -540,10 +566,17 @@ class ECP_classification(BaseEstimator):
         test_pi = pred_probs.argsort(1)[:, ::-1]
 
         # obtaining predictive distribution
-        predictive_y = self.epistemic_obj.predict_pmf(X_test, random_seed=random_seed)
+        predictive_y = self.pred_model.predict_pmf(
+            X_test,
+            random_seed=random_seed,
+        )
 
         # using APS order to derive new conformal score
-        test_score = np.take_along_axis(predictive_y, test_pi, axis=1).cumsum(axis=1)
+        test_score = np.take_along_axis(
+            predictive_y,
+            test_pi,
+            axis=1,
+        ).cumsum(axis=1)
 
         prediction_sets = np.take_along_axis(
             np.less_equal(test_score, self.cutoff),
