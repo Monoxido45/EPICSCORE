@@ -687,6 +687,9 @@ class APSSplit(BaseEstimator):
         base_model,
         alpha=0.1,
         is_fitted=False,
+        raps=False,
+        lam_reg=0.01,
+        k_reg=5,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -694,6 +697,9 @@ class APSSplit(BaseEstimator):
         self.nc_score = APSScore(base_model, is_fitted=is_fitted, **kwargs)
         self.alpha = alpha
         self.base_model = self.nc_score.base_model
+        self.raps = raps
+        self.lam_reg = lam_reg
+        self.k_reg = k_reg
 
     def fit(self, X_train, y_train):
         self.nc_score.fit(X_train, y_train)
@@ -702,6 +708,9 @@ class APSSplit(BaseEstimator):
         res = self.nc_score.compute(
             X_calib,
             y_calib,
+            raps=self.raps,
+            lam_reg=self.lam_reg,
+            k_reg=self.k_reg,
         )
         n = X_calib.shape[0]
         self.cutoff = np.quantile(res, q=np.ceil((n + 1) * (1 - self.alpha)) / n)
