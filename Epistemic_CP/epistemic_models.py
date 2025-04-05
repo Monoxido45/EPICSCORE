@@ -399,7 +399,7 @@ class MDN_model(BaseEstimator):
 
         return pi_predictions, mu_predictions, sigma_predictions
 
-    def predict(self, X_test):
+    def predict(self, X_test, y_test=None, return_params=False):
         """
         Make predictions with MDN base model.
 
@@ -422,6 +422,25 @@ class MDN_model(BaseEstimator):
             alphas = [self.alpha / 2, 1 - (self.alpha / 2)]
             quantiles_test = self.mixture_quantile(alphas, pi, mu, sigma)
             return quantiles_test
+        # density part
+        elif self.base_model_type == "density" and (y_test is not None):
+            # normalizing y_test if needed
+            if self.log_y:
+                y_test = st.boxcox(y_test, lmbda=self.lmbda)
+            if self.normalize_y:
+                y_test = self.y_scaler.transform(y_test.reshape(-1, 1)).flatten()
+
+            # transforming to tensor also if needed
+            if isinstance(y_test, np.ndarray):
+                y_test = torch.tensor(y_test, dtype=torch.float32)
+                density_test = self.mixture_density(y_test, pi, mu, sigma)
+            if return_params:
+                return density_test, pi, mu, sigma
+            else:
+                return density_test
+
+        elif self.base_model_type == "density" and (y_test is None):
+            return pi, mu, sigma
 
     def mixture_quantile(self, alphas, pi, mu, sigma, rng=0, N=1000):
         """
@@ -593,6 +612,169 @@ class MDN_model(BaseEstimator):
 
                     sample[i, j] = rng.gamma(shape=alpha, scale=1 / beta)
 
+        return sample
+
+    # HPD related functions
+    def mixture_density(self, y_test, pi, mu, sigma):
+        """
+        Computes the density of the mixture of normal distributions for each mixture and score.
+
+        Input:
+            (i) pi (torch.Tensor): Mixture weights of shape (n_samples, n_components).
+            (ii) mu (torch.Tensor): Means of the components of shape (n_samples, n_components).
+            (iii) sigma (torch.Tensor): Standard deviations of the components of shape (n_samples, n_components).
+
+        Output:
+            (i) density_values (torch.Tensor): Tensor of shape (n_samples,) containing the density values
+            for each mixture and score.
+        """
+        if isinstance(pi, np.ndarray):
+            pi = torch.tensor(pi)
+        if isinstance(mu, np.ndarray):
+            mu = torch.tensor(mu)
+        if isinstance(sigma, np.ndarray):
+            sigma = torch.tensor(sigma)
+
+        y = y_test.view(-1, 1)
+
+        density_values = torch.sum(pi * gaussian_pdf(y, mu, sigma), dim=1)
+        return density_values
+
+    def mixture_cdf_density(self, y_test, X_test):
+        """
+        Computes the CDF of the mixture of normal distributions for each mixture and score.
+        Input:
+            (i) y_test (torch.Tensor): Tensor of shape (n_samples,) with the scores for which to compute the CDF.
+            (ii) X_test (torch.Tensor): Tensor of shape (n_samples, n_features) with the input data.
+        Output:
+            (i) CDF of density values (torch.Tensor): Tensor of shape (n_samples,) containing the CDF of the density for each testing sample
+        """
+        # first computing the density for observed values
+        dens_values, pi, mu, sigma = self.predict(X_test, y_test, return_params=True)
+
+        # sampling to derive CDF of density
+        sample = self.sample_from_mixture(pi, mu, sigma, N=1000)
+        sample = torch.tensor(sample, dtype=torch.float32)
+
+        # computing density for each sample
+        cdf_dens_values = np.zeros(y_test.shape[0])
+        for i in range(sample.shape[0]):
+            fixed_dens = -dens_values[i].numpy()
+            pi_value, mu_value, sigma_value = pi[i], mu[i], sigma[i]
+            new_y = sample[i, :].reshape(-1, 1)
+
+            pi_repeated = pi_value.repeat(new_y.shape[0], 1)
+            mu_repeated = mu_value.repeat(new_y.shape[0], 1)
+            sigma_repeated = sigma_value.repeat(new_y.shape[0], 1)
+
+            # computing density for each sample
+            dens_values_sim = -self.mixture_density(
+                new_y, pi_repeated, mu_repeated, sigma_repeated
+            ).numpy()
+
+            # compute the mean of the dens_values_sim that are less than the fixed density
+            cdf_dens_values[i] = np.mean((dens_values_sim <= fixed_dens) + 0)
+
+        return cdf_dens_values
+
+    def predict_cdf_cutoff(self, X, cutoff, num_samples=1000):
+        # predicting first the mixture parameters for X
+        pi, mu, sigma = self.predict(X)
+
+        # generating samples from the mixture
+        sample = self.sample_from_mixture(pi, mu, sigma, N=num_samples)
+        sample = torch.tensor(sample, dtype=torch.float32)
+
+        # computing density for each sample
+        cutoff_hpd = np.zeros(X.shape[0])
+        for i in range(sample.shape[0]):
+            pi_value, mu_value, sigma_value = pi[i], mu[i], sigma[i]
+            new_y = sample[i, :].reshape(-1, 1)
+
+            pi_repeated = pi_value.repeat(new_y.shape[0], 1)
+            mu_repeated = mu_value.repeat(new_y.shape[0], 1)
+            sigma_repeated = sigma_value.repeat(new_y.shape[0], 1)
+
+            # computing density for each sample
+            dens_values_sim = self.mixture_density(
+                new_y, pi_repeated, mu_repeated, sigma_repeated
+            )
+
+            # compute the mean of the dens_values_sim that are less
+            # than the cutoff
+            cutoff_hpd[i] = np.quantile(-dens_values_sim.numpy(), cutoff)
+
+            # compute the mean of the dens_values_sim that are less
+            # than the fixed density
+        return cutoff_hpd
+
+    def predict_mixture_density(self, X, y_grid, num_samples=1000):
+        # predicting first the mixture parameters for X
+        pi, mu, sigma = self.predict(X)
+
+        # generating samples from the mixture
+        sample = self.sample_from_mixture(pi, mu, sigma, N=num_samples)
+        sample = torch.tensor(sample, dtype=torch.float32)
+
+        if isinstance(y_grid, np.ndarray):
+            y_grid = torch.tensor(y_grid, dtype=torch.float32)
+
+        # computing density for each sample
+        dens_values = np.zeros((X.shape[0], y_grid.shape[0]))
+        for i in range(sample.shape[0]):
+            pi_value, mu_value, sigma_value = pi[i], mu[i], sigma[i]
+            new_y = y_grid.reshape(-1, 1)
+
+            pi_repeated = pi_value.repeat(new_y.shape[0], 1)
+            mu_repeated = mu_value.repeat(new_y.shape[0], 1)
+            sigma_repeated = sigma_value.repeat(new_y.shape[0], 1)
+
+            # computing density for each sample
+            dens_values_sim = self.mixture_density(
+                new_y, pi_repeated, mu_repeated, sigma_repeated
+            )
+
+            # compute the mean of the dens_values_sim that are less
+            # than the cutoff
+            dens_values[i, :] = dens_values_sim.numpy()
+
+            # compute the mean of the dens_values_sim that are less
+            # than the fixed density
+        return dens_values
+
+    def mdn_generate_densities(self, pi, mu, sigma, rng=0):
+        if isinstance(rng, int):
+            rng = np.random.default_rng(42)
+
+        # Converting to numpy
+        pi_np = pi.detach().numpy()
+        mu_np = mu.detach().numpy()
+        sigma_np = sigma.detach().numpy()
+
+        n_mc, n_obs, n_comp = pi.shape
+        sample = np.zeros((n_obs, n_mc))
+
+        for i in range(n_obs):
+            for j in range(n_mc):
+                # normalizing pi
+                pi_i = pi_np[j, i, :]
+                pi_i = pi_i / pi_i.sum()
+
+                # sampling based on component
+                component = rng.choice(n_comp, size=1, p=pi_i)
+
+                if self.type == "gaussian":
+                    sample[i, j] = rng.normal(
+                        mu_np[j, i, component[0]], sigma_np[j, i, component[0]]
+                    )
+                # computing density for each sample
+                density = np.sum(
+                    pi_i
+                    * norm.pdf(
+                        sample[i, j], loc=mu_np[j, i, :], scale=sigma_np[j, i, :]
+                    )
+                )
+                sample[i, j] = -density
         return sample
 
     def mixture_cdf(self, sample, scores):
