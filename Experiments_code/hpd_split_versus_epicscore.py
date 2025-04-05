@@ -45,8 +45,8 @@ def generate_data(n, rng):
 # implementing the model
 model = MDN_model(
     input_shape=1,
-    num_components=2,
-    hidden_layers=[64, 64],
+    num_components=1,
+    hidden_layers=[120, 64, 32],
     dropout_rate=0.5,
     normalize_y=True,
     base_model_type="density",
@@ -55,9 +55,9 @@ model = MDN_model(
 alpha = 0.1
 # considering 500 samples first
 # Simulating samples
-data_train = generate_data(1000, rng)
-data_calibration = generate_data(1000, rng)
-data_test = generate_data(1000, rng)
+data_train = generate_data(500, rng)
+data_calibration = generate_data(500, rng)
+data_test = generate_data(500, rng)
 
 X_train = data_train["x"].to_numpy().reshape(-1, 1)
 y_train = data_train["y"].to_numpy()
@@ -68,7 +68,7 @@ y_test = data_test["y"].to_numpy()
 X_calib = data_calibration["x"].to_numpy().reshape(-1, 1)
 y_calib = data_calibration["y"].to_numpy()
 
-x_grid = np.linspace(data_train["x"].min(), data_train["x"].max(), 300).reshape(-1, 1)
+x_grid = np.linspace(data_train["x"].min(), data_train["x"].max(), 750).reshape(-1, 1)
 
 # fitting model to training data
 model.fit(
@@ -96,7 +96,7 @@ sample_s = model.mdn_generate_densities(
 )
 
 # computing the predictive CDF cutoff
-s_prime_calibration = model.mixture_cdf(sample_s, dens_score)
+s_prime_calibration = model.mixture_cdf_no_scale(sample_s, dens_score)
 
 # converting to numpy
 s_prime_calibration_np = s_prime_calibration.flatten()
@@ -128,7 +128,6 @@ sample_test = model.mdn_generate_densities(
     mu_test,
     sigma_test,
 )
-
 t_inverse_test = model.mixture_ppf(sample_test, [t_cutoff]).numpy().flatten()
 
 
@@ -140,18 +139,16 @@ t_cutoff_hpd = model.predict_cdf_cutoff(
 )
 
 # y grid between -6 and 6
-y_grid = np.linspace(-6, 6, 500)
+y_grid = np.linspace(-6, 6, 750)
 # using gridding to compute density for each x_grid
 densities = -model.predict_mixture_density(
     x_grid,
     torch.tensor(y_grid),
-    num_samples=1000,
 )
 
 # Creating dictionaries for HPD and EPICSCORE
 hpd_dict = {}
 epicscore_dict = {}
-
 for i, x_val in enumerate(x_grid.flatten()):
     # Select densities lower than t_cutoff_hpd for HPD
     hpd_dict[x_val] = y_grid[densities[i] <= t_cutoff_hpd[i]]
@@ -166,8 +163,16 @@ fig, axes = plt.subplots(1, 2, figsize=(16, 6), sharey=True)
 for x_val, y_vals in hpd_dict.items():
     if len(y_vals) > 0:
         axes[0].fill_betweenx(
-            y_vals, x_val - 0.01, x_val + 0.01, color="blue", alpha=0.3
+            y_vals,
+            x_val - 0.01,
+            x_val + 0.01,
+            color="blue",
+            alpha=0.3,
         )
+
+# Adding scatter points for the test data
+axes[0].scatter(X_test, y_test, color="black", alpha=0.5, s=10)
+
 axes[0].set_xlabel("x")
 axes[0].set_ylabel("y")
 axes[0].set_title("Prediction Regions: HPD")
@@ -176,7 +181,15 @@ axes[0].set_title("Prediction Regions: HPD")
 for x_val, y_vals in epicscore_dict.items():
     if len(y_vals) > 0:
         axes[1].fill_betweenx(
-            y_vals, x_val - 0.01, x_val + 0.01, color="red", alpha=0.3
+            y_vals,
+            x_val - 0.01,
+            x_val + 0.01,
+            color="red",
+            alpha=0.3,
         )
+axes[1].scatter(X_test, y_test, color="black", alpha=0.5, s=10)
 axes[1].set_xlabel("x")
 axes[1].set_title("Prediction Regions: EPICSCORE")
+
+plt.tight_layout()
+plt.show()
