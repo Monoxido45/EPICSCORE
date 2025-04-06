@@ -659,7 +659,7 @@ class MDN_model(BaseEstimator):
         # computing density for each sample
         cdf_dens_values = np.zeros(y_test.shape[0])
         for i in range(sample.shape[0]):
-            fixed_dens = -dens_values[i].numpy()
+            fixed_dens = dens_values[i].numpy()
             pi_value, mu_value, sigma_value = pi[i], mu[i], sigma[i]
             new_y = sample[i, :].reshape(-1, 1)
 
@@ -668,7 +668,7 @@ class MDN_model(BaseEstimator):
             sigma_repeated = sigma_value.repeat(new_y.shape[0], 1)
 
             # computing density for each sample
-            dens_values_sim = -self.mixture_density(
+            dens_values_sim = self.mixture_density(
                 new_y, pi_repeated, mu_repeated, sigma_repeated
             ).numpy()
 
@@ -702,7 +702,7 @@ class MDN_model(BaseEstimator):
 
             # compute the mean of the dens_values_sim that are less
             # than the cutoff
-            cutoff_hpd[i] = np.quantile(-dens_values_sim.numpy(), cutoff)
+            cutoff_hpd[i] = np.quantile(dens_values_sim.numpy(), cutoff)
 
             # compute the mean of the dens_values_sim that are less
             # than the fixed density
@@ -777,7 +777,7 @@ class MDN_model(BaseEstimator):
                         scale=sigma_np[j, i, :],
                     )
                 )
-                sample[i, j] = -density
+                sample[i, j] = density
         return sample
 
     def mixture_cdf_no_scale(self, sample, scores):
