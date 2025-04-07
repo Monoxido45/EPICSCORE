@@ -11,6 +11,7 @@ from Epistemic_CP.epistemic_cp import (
 from sklearn.neighbors import KNeighborsRegressor
 from Epistemic_CP.utils import average_interval_score_loss
 import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 # Set the theme for plots
 sns.set_theme(style="whitegrid", rc={"axes.labelsize": 16})
@@ -44,15 +45,43 @@ def generate_data(n, rng):
     return pd.DataFrame({"x": x_sparse, "y": y})
 
 
+def generate_data_new(
+    n,
+    cond_exp,
+    noise_sd_fn,
+    rng,
+):
+    num_dense = round(0.8 * n)  # half of the data points go to dense regions
+    num_low = round(0.2 * n)
+
+    x_1 = rng.uniform(size=num_dense, low=-1, high=0)
+    x_2 = rng.beta(5, 5, size=num_low)
+
+    x = np.concatenate([x_1, x_2])
+
+    noise_sd = noise_sd_fn(x)
+    noise = rng.normal(scale=noise_sd, size=n)
+    y = cond_exp(x) + noise
+    return pd.DataFrame({"x": x, "y": y})
+
+
+def cond_exp(x):
+    return (x > -0) * 1  # Generally we only make function of first covariate
+
+
+def noise_sd_fn(x):
+    return 0.05 + np.sin(15 * x) ** 2 * (x > 0)
+
+
 # fitting base model
 torch.manual_seed(45)
 rng = np.random.default_rng(45)
 alpha = 0.1
 # considering 500 samples first
 # Simulating samples
-data_train = generate_data(1000, rng)
-data_calibration = generate_data(1000, rng)
-data_test = generate_data(1000, rng)
+data_train = generate_data_new(200, cond_exp, noise_sd_fn, rng)
+data_calibration = generate_data_new(200, cond_exp, noise_sd_fn, rng)
+data_test = generate_data_new(200, cond_exp, noise_sd_fn, rng)
 
 X_test = data_test["x"].to_numpy().reshape(-1, 1)
 y_test = data_test["y"].to_numpy()
@@ -61,7 +90,7 @@ X_calib = data_calibration["x"].to_numpy().reshape(-1, 1)
 y_calib = data_calibration["y"].to_numpy()
 
 # gridding
-x_grid = np.linspace(data_train["x"].min(), data_train["x"].max(), 300).reshape(-1, 1)
+x_grid = np.linspace(-1, 1, 300).reshape(-1, 1)
 
 # fitting base model
 X_train = data_train["x"].to_numpy().reshape(-1, 1)
@@ -98,15 +127,14 @@ t_cutoff_dif = ecp_bart_dif.calib(
     epistemic_model="BART",
     random_seed_fit=rng,
     random_seed=42,
-    m=30,
+    m=50,
     var="heteroscedastic",
-    N_samples_MC=500,
-    type="gamma",
-    normalize_y=False,
+    type="normal",
+    normalize_y=True,
+    N_samples_MC=1000,
     n_cores=8,
     progress=True,
-    alpha=0.95,
-    beta=2,
+    alpha=0.9,
 )
 pred_ecp_bart_dif = ecp_bart_dif.predict(x_grid, random_seed=rng)
 
@@ -126,15 +154,14 @@ t_cutoff_con = ecp_bart_con.calib(
     epistemic_model="BART",
     random_seed_fit=rng,
     random_seed=42,
-    m=30,
+    m=50,
     var="heteroscedastic",
-    N_samples_MC=500,
-    type="gamma",
-    normalize_y=False,
+    type="normal",
+    normalize_y=True,
+    N_samples_MC=1000,
     n_cores=8,
     progress=True,
-    alpha=0.15,
-    beta=2,
+    alpha=0.1,
 )
 
 pred_ecp_bart_con = ecp_bart_con.predict(x_grid, random_seed=rng)
@@ -153,9 +180,9 @@ axs[0].fill_between(
     pred_ecp_bart_dif[:, 1],
     color="darkred",
     alpha=0.5,
-    label="Difused Prior",
+    label="Diffuse Prior",
 )
-axs[0].set_title("Difused BART prior")
+axs[0].set_title("Diffuse BART prior")
 axs[0].set_xlabel("x")
 axs[0].set_ylabel("y")
 
@@ -204,3 +231,78 @@ ais_con = average_interval_score_loss(
     pred_ecp_bart_con_test[:, 0], pred_ecp_bart_con_test[:, 1], y_test, alpha=alpha
 )
 print(f"AIS for Concentrated Prior: {ais_con:.4f}")
+
+
+#####################################################
+torch.manual_seed(45)
+alpha = 0.1
+rng = np.random.default_rng(45)
+# Comparing alphas according to smis
+# rough grid of alphas to evaluate smis
+alpha_grid = np.linspace(0.1, 0.975, 30)
+
+# Simulating samples
+data_train = generate_data_new(200, cond_exp, noise_sd_fn, rng)
+data_calibration = generate_data_new(200, cond_exp, noise_sd_fn, rng)
+data_test = generate_data_new(500, cond_exp, noise_sd_fn, rng)
+
+X_calib = data_calibration["x"].to_numpy().reshape(-1, 1)
+y_calib = data_calibration["y"].to_numpy()
+
+# fitting base model
+X_train = data_train["x"].to_numpy().reshape(-1, 1)
+y_train = data_train["y"].to_numpy()
+
+X_test = data_test["x"].to_numpy().reshape(-1, 1)
+y_test = data_test["y"].to_numpy()
+
+model = KNeighborsRegressor(n_neighbors=10)
+model.fit(X_train, y_train)
+
+smis_array = np.zeros(len(alpha_grid))
+for i in tqdm(range(alpha_grid.shape[0]), desc="Computing SMIS for each alpha"):
+
+    alpha_prior = alpha_grid[i]
+    # fitting ECP, weighted, reg-split and mondrian
+    ecp_bart = ECP_split(
+        RegressionScore,
+        base_model=model,
+        alpha=alpha,
+        is_fitted=True,
+    )
+
+    ecp_bart.fit(X_train, y_train)
+    t_cutoff = ecp_bart.calib(
+        X_calib,
+        y_calib,
+        epistemic_model="BART",
+        random_seed_fit=rng,
+        random_seed=42,
+        m=50,
+        var="heteroscedastic",
+        type="normal",
+        normalize_y=True,
+        N_samples_MC=1000,
+        n_cores=6,
+        progress=False,
+        alpha=alpha_prior,
+    )
+
+    pred_ecp_bart = ecp_bart.predict(X_test, random_seed=rng)
+
+    # computing smis
+    smis_array[i] = average_interval_score_loss(
+        pred_ecp_bart[:, 0],
+        pred_ecp_bart[:, 1],
+        y_test,
+        alpha=alpha,
+    )
+
+# Plotting SMIS vs Alpha
+plt.figure(figsize=(10, 6))
+plt.plot(alpha_grid, smis_array, marker="o", linestyle="-", color="blue")
+plt.xlabel(r"$\alpha$")
+plt.ylabel("AISL (Average Interval Score Loss)")
+plt.title(r"AISL vs $\alpha$")
+plt.grid(True)
+plt.show()
