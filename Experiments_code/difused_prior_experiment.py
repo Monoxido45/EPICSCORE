@@ -239,7 +239,7 @@ alpha = 0.1
 rng = np.random.default_rng(45)
 # Comparing alphas according to smis
 # rough grid of alphas to evaluate smis
-alpha_grid = np.linspace(0.1, 0.975, 30)
+alpha_grid = np.linspace(0.1, 0.975, 15)
 
 # Simulating samples
 data_train = generate_data_new(200, cond_exp, noise_sd_fn, rng)
@@ -259,10 +259,13 @@ y_test = data_test["y"].to_numpy()
 model = KNeighborsRegressor(n_neighbors=10)
 model.fit(X_train, y_train)
 
+n_rep = 10
+
 smis_array = np.zeros(len(alpha_grid))
 for i in tqdm(range(alpha_grid.shape[0]), desc="Computing SMIS for each alpha"):
 
     alpha_prior = alpha_grid[i]
+
     # fitting ECP, weighted, reg-split and mondrian
     ecp_bart = ECP_split(
         RegressionScore,
@@ -272,31 +275,34 @@ for i in tqdm(range(alpha_grid.shape[0]), desc="Computing SMIS for each alpha"):
     )
 
     ecp_bart.fit(X_train, y_train)
-    t_cutoff = ecp_bart.calib(
-        X_calib,
-        y_calib,
-        epistemic_model="BART",
-        random_seed_fit=rng,
-        random_seed=42,
-        m=50,
-        var="heteroscedastic",
-        type="normal",
-        normalize_y=True,
-        N_samples_MC=1000,
-        n_cores=6,
-        progress=False,
-        alpha=alpha_prior,
-    )
+    smis = np.zeros(n_rep)
+    for j in range(n_rep):
+        t_cutoff = ecp_bart.calib(
+            X_calib,
+            y_calib,
+            epistemic_model="BART",
+            random_seed_fit=rng,
+            random_seed=42,
+            m=50,
+            var="heteroscedastic",
+            type="normal",
+            normalize_y=True,
+            N_samples_MC=1000,
+            n_cores=6,
+            progress=False,
+            alpha=alpha_prior,
+        )
 
-    pred_ecp_bart = ecp_bart.predict(X_test, random_seed=rng)
+        pred_ecp_bart = ecp_bart.predict(X_test, random_seed=rng)
 
+        smis[j] = average_interval_score_loss(
+            pred_ecp_bart[:, 0],
+            pred_ecp_bart[:, 1],
+            y_test,
+            alpha=alpha,
+        )
     # computing smis
-    smis_array[i] = average_interval_score_loss(
-        pred_ecp_bart[:, 0],
-        pred_ecp_bart[:, 1],
-        y_test,
-        alpha=alpha,
-    )
+    smis_array[i] = np.mean(smis)
 
 # Plotting SMIS vs Alpha
 plt.figure(figsize=(10, 6))
