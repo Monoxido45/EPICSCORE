@@ -239,7 +239,7 @@ alpha = 0.1
 rng = np.random.default_rng(45)
 # Comparing alphas according to smis
 # rough grid of alphas to evaluate smis
-alpha_grid = np.linspace(0.1, 0.975, 15)
+alpha_grid = np.linspace(0.025, 0.985, 25)
 
 # Simulating samples
 data_train = generate_data_new(200, cond_exp, noise_sd_fn, rng)

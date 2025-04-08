@@ -1,89 +1,3 @@
-# importing mdn model
-from Epistemic_CP.epistemic_models import MDN_model, BART_model
-import torch
-import numpy as np
-import matplotlib.pyplot as plt
-import pandas as pd
-import seaborn as sns
-from sklearn.model_selection import train_test_split
-
-# Set the theme for plots
-sns.set_theme(style="whitegrid", rc={"axes.labelsize": 16})
-torch.manual_seed(15)
-torch.cuda.manual_seed(15)
-rng = np.random.default_rng(15)
-alpha = 0.1
-
-
-# last experiment, comparing now with BART
-def generate_data_new(
-    n,
-    cond_exp,
-    noise_sd_fn,
-    rng,
-):
-    num_dense = round(0.85 * n)  # half of the data points go to dense regions
-    num_low = round(0.15 * n)
-
-    x_1 = rng.uniform(size=num_dense, low=-1, high=0)
-    x_2 = rng.beta(6, 6, size=num_low)
-
-    x = np.concatenate([x_1, x_2])
-
-    noise_sd = noise_sd_fn(x)
-    noise = rng.normal(scale=noise_sd, size=n)
-    y = cond_exp(x) + noise
-    return pd.DataFrame({"x": x, "y": y})
-
-
-def cond_exp(x):
-    return (x > -0) * 1  # Generally we only make function of first covariate
-
-
-def noise_sd_fn(x):
-    return 0.05 + np.sin(15 * x) ** 2 * (x > 0)
-
-
-# Simulating samples
-data_train = generate_data_new(500, cond_exp, noise_sd_fn, rng)
-data_calibration = generate_data_new(500, cond_exp, noise_sd_fn, rng)
-data_test = generate_data_new(1000, cond_exp, noise_sd_fn, rng)
-
-X_test = data_test["x"].to_numpy().reshape(-1, 1)
-y_test = data_test["y"].to_numpy()
-
-X_calib = data_calibration["x"].to_numpy().reshape(-1, 1)
-y_calib = data_calibration["y"].to_numpy()
-
-# gridding
-x_grid = np.linspace(-1, 1, 300).reshape(-1, 1)
-
-# fitting base model
-X_train = data_train["x"].to_numpy().reshape(-1, 1)
-y_train = data_train["y"].to_numpy()
-
-# fitting base model for density
-model = MDN_model(
-    input_shape=1,
-    num_components=3,
-    hidden_layers=[32, 64],
-    dropout_rate=0.15,
-    base_model_type="density",
-)
-
-model.fit(
-    X_train,
-    y_train,
-    epochs=1000,
-    lr=0.001,
-    patience=30,
-    batch_size=15,
-    scale=True,
-)
-
-# HPD band
-hpd_score = model.mixture_cdf_density(y_calib, X_calib)
-n = hpd_score.shape[0]  # importing mdn model
 from Epistemic_CP.epistemic_models import MDN_model, BART_model
 import torch
 import numpy as np
@@ -109,12 +23,9 @@ def generate_data_new(
 ):
     num_dense = round(0.85 * n)  # half of the data points go to dense regions
     num_low = round(0.15 * n)
-
     x_1 = rng.uniform(size=num_dense, low=-1, high=0)
     x_2 = rng.beta(6, 6, size=num_low)
-
     x = np.concatenate([x_1, x_2])
-
     noise_sd = noise_sd_fn(x)
     noise = rng.normal(scale=noise_sd, size=n)
     y = cond_exp(x) + noise
@@ -130,9 +41,9 @@ def noise_sd_fn(x):
 
 
 # Simulating samples
-data_train = generate_data_new(500, cond_exp, noise_sd_fn, rng)
-data_calibration = generate_data_new(500, cond_exp, noise_sd_fn, rng)
-data_test = generate_data_new(500, cond_exp, noise_sd_fn, rng)
+data_train = generate_data_new(2000, cond_exp, noise_sd_fn, rng)
+data_calibration = generate_data_new(2000, cond_exp, noise_sd_fn, rng)
+data_test = generate_data_new(2000, cond_exp, noise_sd_fn, rng)
 
 X_test = data_test["x"].to_numpy().reshape(-1, 1)
 y_test = data_test["y"].to_numpy()
@@ -150,8 +61,8 @@ y_train = data_train["y"].to_numpy()
 # fitting base model for density
 model = MDN_model(
     input_shape=1,
-    num_components=3,
-    hidden_layers=[32, 64],
+    num_components=5,
+    hidden_layers=[64, 128],
     dropout_rate=0.15,
     base_model_type="density",
 )
@@ -162,7 +73,7 @@ model.fit(
     epochs=1000,
     lr=0.001,
     patience=30,
-    batch_size=15,
+    batch_size=35,
     scale=True,
 )
 
@@ -195,7 +106,7 @@ dens_score = model.predict(X_calib, y_calib)
 ) = train_test_split(
     X_calib,
     dens_score.numpy(),
-    test_size=0.45,
+    test_size=0.3,
     random_state=45,
 )
 
@@ -246,7 +157,6 @@ epicscore_dict = {}
 for i, x_val in enumerate(x_grid.flatten()):
     # Select densities lower than t_cutoff_hpd for HPD
     hpd_dict[x_val] = y_grid[densities[i] >= t_cutoff_hpd[i]]
-
     # Select densities lower than t_inverse_test for EPICSCORE
     if len(y_grid[densities[i] >= t_inverse_bart[i]]) == 0:
         print(f"Empty array for x = {x_val}")

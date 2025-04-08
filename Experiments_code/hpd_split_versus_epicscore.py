@@ -1,10 +1,12 @@
 # importing mdn model
-from Epistemic_CP.epistemic_models import MDN_model
+from Epistemic_CP.epistemic_models import MDN_model, BART_model
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
+from sklearn.model_selection import train_test_split
+
 
 # Set the theme for plots
 sns.set_theme(style="whitegrid", rc={"axes.labelsize": 16})
@@ -59,18 +61,18 @@ def generate_data_2(n, rng):
 # implementing the model
 model = MDN_model(
     input_shape=1,
-    num_components=1,
-    hidden_layers=[100, 50],
-    dropout_rate=0.75,
+    num_components=3,
+    hidden_layers=[75, 30],
+    dropout_rate=0.15,
     base_model_type="density",
 )
 
 alpha = 0.1
 # considering 500 samples first
 # Simulating samples
-data_train = generate_data(2000, rng)
-data_calibration = generate_data(2000, rng)
-data_test = generate_data(2000, rng)
+data_train = generate_data(500, rng)
+data_calibration = generate_data(500, rng)
+data_test = generate_data(500, rng)
 
 X_train = data_train["x"].to_numpy().reshape(-1, 1)
 y_train = data_train["y"].to_numpy()
@@ -99,41 +101,41 @@ model.fit(
 
 
 # before that, giving a look to the mean
-X_grid_2 = model.scaler.transform(x_grid)
+# X_grid_2 = model.scaler.transform(x_grid)
 
-X_grid_2 = torch.tensor(X_grid_2, dtype=torch.float32).clone().detach().float()
+# X_grid_2 = torch.tensor(X_grid_2, dtype=torch.float32).clone().detach().float()
 
-model.model.eval()
-with torch.no_grad():
-    pred_test = model.model(X_grid_2)
-    pi, mu, sigma = model.get_mixture_coef(pred_test)
+# model.model.eval()
+# with torch.no_grad():
+#   pred_test = model.model(X_grid_2)
+#  pi, mu, sigma = model.get_mixture_coef(pred_test)
 
-mu_x, sigma_x = mu.numpy(), sigma.numpy()
+# mu_x, sigma_x = mu.numpy(), sigma.numpy()
 
-y_inf = (mu_x - 2 * sigma_x).flatten()
-y_sup = (mu_x + 2 * sigma_x).flatten()
+# y_inf = (mu_x - 2 * sigma_x).flatten()
+# y_sup = (mu_x + 2 * sigma_x).flatten()
 # Plotting the mean prediction with confidence intervals
-plt.figure(figsize=(8, 6))
-plt.plot(
-    x_grid.flatten(),
-    mu_x.flatten(),
-    color="blue",
-    label="Mean Prediction",
-)
-plt.fill_between(
-    x_grid.flatten(),
-    y_inf,
-    y_sup,
-    color="blue",
-    alpha=0.3,
-    label="Confidence Interval",
-)
-plt.scatter(X_test, y_test, color="black", alpha=0.5, s=10, label="Test Data")
-plt.xlabel("x")
-plt.ylabel("y")
-plt.title("Mean Prediction with Confidence Interval")
-plt.legend()
-plt.show()
+# plt.figure(figsize=(8, 6))
+# plt.plot(
+#  x_grid.flatten(),
+#  mu_x.flatten(),
+#  color="blue",
+#  label="Mean Prediction",
+# )
+# plt.fill_between(
+#   x_grid.flatten(),
+#   y_inf,
+#   y_sup,
+#   color="blue",
+#   alpha=0.3,
+#  label="Confidence Interval",
+# )
+# plt.scatter(X_test, y_test, color="black", alpha=0.5, s=10, label="Test Data")
+# plt.xlabel("x")
+# plt.ylabel("y")
+# plt.title("Mean Prediction with Confidence Interval")
+# plt.legend()
+# plt.show()
 
 
 # HPD split part
@@ -265,8 +267,8 @@ plt.show()
 
 ###############################################################################
 # repeating for third simulation
-torch.manual_seed(45)
-torch.cuda.manual_seed(45)
+torch.manual_seed(35)
+torch.cuda.manual_seed(35)
 rng = np.random.default_rng(25)
 
 
@@ -276,11 +278,11 @@ def generate_data_new(
     noise_sd_fn,
     rng,
 ):
-    num_dense = round(0.5 * n)  # half of the data points go to dense regions
-    num_low = round(0.5 * n)
+    num_dense = round(0.8 * n)  # half of the data points go to dense regions
+    num_low = round(0.2 * n)
 
     x_1 = rng.uniform(size=num_dense, low=-1, high=0)
-    x_2 = rng.uniform(0, 1, num_low)
+    x_2 = rng.beta(2, 2, size=num_low)
 
     x = np.concatenate([x_1, x_2])
 
@@ -295,14 +297,14 @@ def cond_exp(x):
 
 
 def noise_sd_fn(x):
-    return 0.01 + np.sin(15 * x) ** 2 * (x > 0)
+    return 0.05 + np.sin(15 * x) ** 2 * (x > 0)
 
 
 model = MDN_model(
     input_shape=1,
-    num_components=3,
-    hidden_layers=[250],
-    dropout_rate=0.4,
+    num_components=2,
+    hidden_layers=[128, 64],
+    dropout_rate=0.35,
     normalize_y=True,
     base_model_type="density",
 )
@@ -310,9 +312,9 @@ model = MDN_model(
 alpha = 0.1
 # considering 500 samples first
 # Simulating samples
-data_train = generate_data_new(100, cond_exp, noise_sd_fn, rng)
-data_calibration = generate_data_new(100, cond_exp, noise_sd_fn, rng)
-data_test = generate_data_new(100, cond_exp, noise_sd_fn, rng)
+data_train = generate_data_new(200, cond_exp, noise_sd_fn, rng)
+data_calibration = generate_data_new(200, cond_exp, noise_sd_fn, rng)
+data_test = generate_data_new(300, cond_exp, noise_sd_fn, rng)
 
 X_train = data_train["x"].to_numpy().reshape(-1, 1)
 y_train = data_train["y"].to_numpy()
@@ -341,7 +343,7 @@ model.fit(
 
 # EPICSCORE part
 # computing the density score in calibration set
-dens_score = -model.predict(X_calib, y_calib)
+dens_score = model.predict(X_calib, y_calib)
 with torch.no_grad():
     pi_prime, mu_prime, sigma_prime = model.predict_mcdropout(
         X_calib,
@@ -362,7 +364,10 @@ s_prime_calibration = model.mixture_cdf_no_scale(sample_s, dens_score)
 s_prime_calibration_np = s_prime_calibration.flatten()
 n = s_prime_calibration_np.shape[0]
 
-t_cutoff = np.quantile(s_prime_calibration_np, np.ceil((n + 1) * (1 - alpha)) / n)
+t_cutoff = np.quantile(
+    s_prime_calibration_np,
+    np.ceil((n + 1) * (alpha)) / n,
+)
 
 
 # HPD split part
@@ -372,7 +377,7 @@ n = hpd_score.shape[0]
 # computing quantile for HPD split
 hpd_quantile = np.quantile(
     hpd_score,
-    np.ceil((n + 1) * (1 - alpha)) / n,
+    np.ceil((n + 1) * (alpha)) / n,
 )
 
 
@@ -401,7 +406,7 @@ t_cutoff_hpd = model.predict_cdf_cutoff(
 # y grid between -6 and 6
 y_grid = np.linspace(-6, 6, 750)
 # using gridding to compute density for each x_grid
-densities = -model.predict_mixture_density(
+densities = model.predict_mixture_density(
     x_grid,
     torch.tensor(y_grid),
 )
@@ -411,10 +416,10 @@ hpd_dict = {}
 epicscore_dict = {}
 for i, x_val in enumerate(x_grid.flatten()):
     # Select densities lower than t_cutoff_hpd for HPD
-    hpd_dict[x_val] = y_grid[densities[i] <= t_cutoff_hpd[i]]
+    hpd_dict[x_val] = y_grid[densities[i] >= t_cutoff_hpd[i]]
 
     # Select densities lower than t_inverse_test for EPICSCORE
-    epicscore_dict[x_val] = y_grid[densities[i] <= t_inverse_test[i]]
+    epicscore_dict[x_val] = y_grid[densities[i] >= t_inverse_test[i]]
 
 # Plotting the prediction regions using subplots
 fig, axes = plt.subplots(1, 2, figsize=(16, 6), sharey=True)
