@@ -112,7 +112,6 @@ def adjust_ecp_obj_with_methods(
     )
 
     pred_ecp_bart_test = ecp_obj.predict(X_test)
-
     # deletting objects and removing from memory
     del ecp_obj
     gc.collect()
@@ -222,7 +221,6 @@ def compare_outlier_inlier(
 ):
     # setting several random seeds
     seeds = generate_seeds(major_seed, n_rep)
-
     interval_lengths_ratio = {
         "MDN": np.zeros(n_rep),
         "GP": np.zeros(n_rep),
@@ -258,33 +256,26 @@ def compare_outlier_inlier(
         # using TSNE for dimensionality reduction
         tsne = TSNE(n_components=n_components, random_state=tsne_random_state)
         X_tsne_test = tsne.fit_transform(X_test)
-
         # Standardize the features
         scaler = StandardScaler()
         X_test_scaled = scaler.fit_transform(X_tsne_test)
-
         # Use Local Outlier Factor for anomaly detection on scaled data
         lof = LocalOutlierFactor(
             n_neighbors=n_neighbors,
             contamination=contamination,
         )
         out_pred = lof.fit_predict(X_test_scaled)
-
         # selecting outliers
         outlier_obs = y_test[out_pred == -1]
         outlier_indexes = np.where(out_pred == -1)[0]
-
         # selecting 15% top inliers
         inlier_indexes = np.setdiff1d(np.arange(len(outlier_obs)), outlier_indexes)
         inlier_scores = lof.negative_outlier_factor_[inlier_indexes]
-
         # computing inlier scores
         size = int((y_test.shape[0] - outlier_obs.shape[0]) * inlier_size)
         most_inlier_idxs = np.argsort(inlier_scores)[::-1][:size]
-
         # outlier labels
         most_cont_labels = y_test[outlier_indexes]
-
         # Select intervals corresponding to outlier indexes
         outlier_intervals_mdn = pred_ecp_mdn_test[outlier_indexes]
         outlier_intervals_gp = pred_ecp_gp_test[outlier_indexes]
@@ -313,7 +304,6 @@ def compare_outlier_inlier(
                 uacqr_pred_test["CQR-r"]["upper"][outlier_indexes],
             )
         )
-
         inlier_intervals_mdn = pred_ecp_mdn_test[most_inlier_idxs]
         inlier_intervals_gp = pred_ecp_gp_test[most_inlier_idxs]
         inlier_intervals_bart = pred_ecp_bart_test[most_inlier_idxs]
@@ -341,7 +331,6 @@ def compare_outlier_inlier(
                 uacqr_pred_test["CQR-r"]["upper"][most_inlier_idxs],
             )
         )
-
         # Calculating ratio between lengths for each method
         mdn_ratio = np.mean(
             compute_interval_length(
@@ -352,7 +341,6 @@ def compare_outlier_inlier(
                 inlier_intervals_mdn[:, 1], inlier_intervals_mdn[:, 0]
             )
         )
-
         gp_ratio = np.mean(
             compute_interval_length(
                 outlier_intervals_gp[:, 1], outlier_intervals_gp[:, 0]
@@ -362,7 +350,6 @@ def compare_outlier_inlier(
                 inlier_intervals_gp[:, 1], inlier_intervals_gp[:, 0]
             )
         )
-
         bart_ratio = np.mean(
             compute_interval_length(
                 outlier_intervals_bart[:, 1], outlier_intervals_bart[:, 0]
@@ -372,7 +359,6 @@ def compare_outlier_inlier(
                 inlier_intervals_bart[:, 1], inlier_intervals_bart[:, 0]
             )
         )
-
         uacqrp_ratio = np.mean(
             compute_interval_length(
                 outlier_intervals_uacqrp[:, 1], outlier_intervals_uacqrp[:, 0]
@@ -382,7 +368,6 @@ def compare_outlier_inlier(
                 inlier_intervals_uacqrp[:, 1], inlier_intervals_uacqrp[:, 0]
             )
         )
-
         uacqrs_ratio = np.mean(
             compute_interval_length(
                 outlier_intervals_uacqrs[:, 1], outlier_intervals_uacqrs[:, 0]
@@ -392,7 +377,6 @@ def compare_outlier_inlier(
                 inlier_intervals_uacqrs[:, 1], inlier_intervals_uacqrs[:, 0]
             )
         )
-
         cqr_ratio = np.mean(
             compute_interval_length(
                 outlier_intervals_cqr[:, 1], outlier_intervals_cqr[:, 0]
@@ -402,7 +386,6 @@ def compare_outlier_inlier(
                 inlier_intervals_cqr[:, 1], inlier_intervals_cqr[:, 0]
             )
         )
-
         cqrr_ratio = np.mean(
             compute_interval_length(
                 outlier_intervals_cqrr[:, 1], outlier_intervals_cqrr[:, 0]
@@ -412,7 +395,6 @@ def compare_outlier_inlier(
                 inlier_intervals_cqrr[:, 1], inlier_intervals_cqrr[:, 0]
             )
         )
-
         # storing the ratios
         interval_lengths_ratio["MDN"][i] = mdn_ratio
         interval_lengths_ratio["GP"][i] = gp_ratio
@@ -421,7 +403,6 @@ def compare_outlier_inlier(
         interval_lengths_ratio["UACQR-S"][i] = uacqrs_ratio
         interval_lengths_ratio["CQR"][i] = cqr_ratio
         interval_lengths_ratio["CQR-r"][i] = cqrr_ratio
-
     # returning the results
     interval_lengths_ratio_df = pd.DataFrame(interval_lengths_ratio)
     return interval_lengths_ratio_df
@@ -508,9 +489,14 @@ airfoil_ratio_dict = compare_outlier_inlier(
 # Compute the mean and standard deviation of each column in the DataFrame
 airfoil_ratio_dict = airfoil_ratio_dict.round(3)
 mean_std_df = airfoil_ratio_dict.agg(["mean", "std"])
-mean_std_df.loc["std"] = 2 * (mean_std_df.loc["std"] / np.sqrt(30))
+mean_std_df.loc["std"] = mean_std_df.loc["std"] / np.sqrt(50)
 mean_std_df = mean_std_df.round(3)
 mean_std_df
+
+# Save the DataFrame to a CSV file
+mean_std_df.to_csv(
+    original_path + f"/Experiments_code/{data_name}_mean_std.csv", index=True
+)
 
 
 # second dataset: winered
@@ -520,7 +506,7 @@ data = pd.read_csv(original_path + f"/data/processed/{data_name}.csv")
 # returning the predictions and X_test
 winewhite_ratio_dict = compare_outlier_inlier(
     data=data,
-    n_rep=50,
+    n_rep=30,
     base_params=base_params,
     uacqr_params=uacqr_params,
     mdn_params=mdn_params,
@@ -535,6 +521,6 @@ winewhite_ratio_dict = compare_outlier_inlier(
 # Compute the mean and standard deviation of each column in the DataFrame
 winewhite_ratio_dict = winewhite_ratio_dict.round(3)
 mean_std_df = winewhite_ratio_dict.agg(["mean", "std"])
-mean_std_df.loc["std"] = 2 * (mean_std_df.loc["std"] / np.sqrt(50))
+mean_std_df.loc["std"] = mean_std_df.loc["std"] / np.sqrt(30)
 mean_std_df = mean_std_df.round(3)
 mean_std_df
