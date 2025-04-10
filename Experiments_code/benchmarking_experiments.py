@@ -10,6 +10,7 @@ from tqdm import tqdm
 from sklearn.preprocessing import StandardScaler
 from sklearn.neighbors import KNeighborsRegressor
 import time
+from matplotlib.ticker import LogLocator
 
 
 # different seeds generated for splitting data
@@ -76,12 +77,15 @@ def benchmark_function(
             if n_sample <= 5000:
                 batch_size = 35
                 n_inducing_points = 15
-            elif 5000 < n_sample <= 20000:
+            elif 5000 < n_sample <= 10000:
                 batch_size = 126
                 n_inducing_points = 30
-            else:
+            elif 10000 < n_sample <= 20000:
                 batch_size = 250
-                n_inducing_points = 65
+                n_inducing_points = 50
+            else:
+                batch_size = 450
+                n_inducing_points = 150
 
             # fitting mdn and saving time
             start_time = time.time()
@@ -151,13 +155,13 @@ def benchmark_function(
 
         # Compute average and standard error for each model
         mdn_time_mean = np.mean(mdn_times)
-        mdn_time_stderr = 0  # np.std(mdn_times) / np.sqrt(len(mdn_times))
+        mdn_time_stderr = np.std(mdn_times) / np.sqrt(len(mdn_times))
 
         bart_time_mean = np.mean(bart_times)
-        bart_time_stderr = 0  # np.std(bart_times) / np.sqrt(len(bart_times))
+        bart_time_stderr = np.std(bart_times) / np.sqrt(len(bart_times))
 
         gp_time_mean = np.mean(gp_times)
-        gp_time_stderr = 0  # np.std(gp_times) / np.sqrt(len(gp_times))
+        gp_time_stderr = np.std(gp_times) / np.sqrt(len(gp_times))
 
         # Store results
         mdn_time[j] = np.array([mdn_time_mean, mdn_time_stderr])
@@ -170,4 +174,67 @@ def benchmark_function(
     return mdn_time, bart_time, gp_time
 
 
-mdn_time, bart_time, gp_time = benchmark_function(n_rep=1)
+mdn_time, bart_time, gp_time = benchmark_function(
+    n_rep=10,
+    n_it=np.array([500, 1000, 2000, 5000, 10000, 20000, 50000]),
+    n_features=20,
+)
+
+# Plotting the running times with error bars
+plt.figure(figsize=(10, 6))
+
+n_samples = np.array([500, 1000, 2000, 5000, 10000, 20000, 50000])
+
+# Plot MDN times
+plt.errorbar(
+    n_samples,
+    mdn_time[:, 0],
+    yerr=mdn_time[:, 1],
+    label="MDN",
+    fmt="o-",
+    capsize=5,
+)
+
+# Plot BART times
+plt.errorbar(
+    n_samples,
+    bart_time[:, 0],
+    yerr=bart_time[:, 1],
+    label="BART",
+    fmt="s-",
+    capsize=5,
+)
+
+# Plot GP times
+plt.errorbar(
+    n_samples,
+    gp_time[:, 0],
+    yerr=gp_time[:, 1],
+    label="GP",
+    fmt="^-",
+    capsize=5,
+)
+
+# Customize the plot
+plt.xscale("log")
+plt.yscale("log")
+plt.xlabel("Number of Samples (log scale)")
+plt.ylabel("Running Time (seconds, log scale)")
+plt.title("Running Times with Standard Errors")
+plt.legend()
+plt.grid(True, which="both", linestyle="--", linewidth=0.5)
+# Add more ticks to the log scale
+
+plt.gca().xaxis.set_major_locator(
+    LogLocator(base=10.0, subs=np.arange(1.0, 10.0) * 0.1, numticks=10)
+)
+plt.gca().yaxis.set_major_locator(
+    LogLocator(base=10.0, subs=np.arange(1.0, 10.0) * 0.1, numticks=10)
+)
+plt.ylim(5, 1000)  # Increase y-axis limits
+plt.xlim(100, 7.5 * 10000)
+# Expand the size of the plot
+plt.gcf().set_size_inches(12, 8)
+# Show the plot
+plt.tight_layout()
+plt.show()
