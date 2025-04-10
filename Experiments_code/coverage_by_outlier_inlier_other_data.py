@@ -81,7 +81,6 @@ def adjust_ecp_obj_with_methods(
         ensemble=ensemble,
     )
     pred_ecp_mdn_test = ecp_obj.predict(X_test)
-
     # fitting ecp_obj - GP
     ecp_obj.calib(
         X_calib,
@@ -97,7 +96,6 @@ def adjust_ecp_obj_with_methods(
         ensemble=ensemble,
     )
     pred_ecp_gp_test = ecp_obj.predict(X_test)
-
     # fitting ecp_obj - BART
     ecp_obj.fit(X_train, y_train)
     ecp_obj.calib(
@@ -110,7 +108,6 @@ def adjust_ecp_obj_with_methods(
         type=bart_params["type"],
         ensemble=ensemble,
     )
-
     pred_ecp_bart_test = ecp_obj.predict(X_test)
     # deletting objects and removing from memory
     del ecp_obj
@@ -132,7 +129,6 @@ def fit_and_return_pred_intervals(
 ):
     X = data.drop(columns=["target"])
     y = data["target"]
-
     X_train_calib, X_test, y_train_calib, y_test = train_test_split(
         X,
         y,
@@ -145,7 +141,6 @@ def fit_and_return_pred_intervals(
         test_size=prop_train,
         random_state=random_seed,
     )
-
     # fitting base estimator and UACQR
     uacqr_results = uacqr(
         base_params,
@@ -156,17 +151,14 @@ def fit_and_return_pred_intervals(
         random_state=random_seed,
         uacqrs_agg=uacqr_params["uacqrs_agg"],
     )
-
     uacqr_results.fit(X_train, y_train)
     uacqr_results.calibrate(X_calib, y_calib)
     uacqr_pred_test = uacqr_results.predict_uacqr(X_test)
-
     # Preparing Calibration and Test Data for ECP
     X_calib = X_calib.to_numpy()
     y_calib = y_calib.to_numpy()
     X_test = X_test.to_numpy()
     y_test = y_test.to_numpy()
-
     # fitting the different ECP methods
     ecp_obj = ECP_split(
         QuantileScore,
@@ -175,7 +167,6 @@ def fit_and_return_pred_intervals(
         is_fitted=True,
         base_model_type=uacqr_params["base_model_type"],
     )
-
     pred_ecp_mdn_test, pred_ecp_gp_test, pred_ecp_bart_test = (
         adjust_ecp_obj_with_methods(
             ecp_obj,
@@ -190,7 +181,6 @@ def fit_and_return_pred_intervals(
             ensemble=False,
         )
     )
-
     return (
         pred_ecp_mdn_test,
         pred_ecp_gp_test,
@@ -222,6 +212,24 @@ def compare_outlier_inlier(
     # setting several random seeds
     seeds = generate_seeds(major_seed, n_rep)
     interval_lengths_ratio = {
+        "MDN": np.zeros(n_rep),
+        "GP": np.zeros(n_rep),
+        "BART": np.zeros(n_rep),
+        "UACQR-P": np.zeros(n_rep),
+        "UACQR-S": np.zeros(n_rep),
+        "CQR": np.zeros(n_rep),
+        "CQR-r": np.zeros(n_rep),
+    }
+    coverage_outlier = {
+        "MDN": np.zeros(n_rep),
+        "GP": np.zeros(n_rep),
+        "BART": np.zeros(n_rep),
+        "UACQR-P": np.zeros(n_rep),
+        "UACQR-S": np.zeros(n_rep),
+        "CQR": np.zeros(n_rep),
+        "CQR-r": np.zeros(n_rep),
+    }
+    smis_outlier = {
         "MDN": np.zeros(n_rep),
         "GP": np.zeros(n_rep),
         "BART": np.zeros(n_rep),
@@ -269,7 +277,7 @@ def compare_outlier_inlier(
         outlier_obs = y_test[out_pred == -1]
         outlier_indexes = np.where(out_pred == -1)[0]
         # selecting 15% top inliers
-        inlier_indexes = np.setdiff1d(np.arange(len(outlier_obs)), outlier_indexes)
+        inlier_indexes = np.setdiff1d(np.arange(len(y_test)), outlier_indexes)
         inlier_scores = lof.negative_outlier_factor_[inlier_indexes]
         # computing inlier scores
         size = int((y_test.shape[0] - outlier_obs.shape[0]) * inlier_size)
@@ -395,6 +403,78 @@ def compare_outlier_inlier(
                 inlier_intervals_cqrr[:, 1], inlier_intervals_cqrr[:, 0]
             )
         )
+        # Calculating average coverage for outliers
+        avg_coverage_mdn = average_coverage(
+            outlier_intervals_mdn[:, 1], outlier_intervals_mdn[:, 0], outlier_obs
+        )
+        avg_coverage_gp = average_coverage(
+            outlier_intervals_gp[:, 1], outlier_intervals_gp[:, 0], outlier_obs
+        )
+        avg_coverage_bart = average_coverage(
+            outlier_intervals_bart[:, 1], outlier_intervals_bart[:, 0], outlier_obs
+        )
+        avg_coverage_uacqrp = average_coverage(
+            outlier_intervals_uacqrp[:, 1], outlier_intervals_uacqrp[:, 0], outlier_obs
+        )
+        avg_coverage_uacqrs = average_coverage(
+            outlier_intervals_uacqrs[:, 1], outlier_intervals_uacqrs[:, 0], outlier_obs
+        )
+        avg_coverage_cqr = average_coverage(
+            outlier_intervals_cqr[:, 1], outlier_intervals_cqr[:, 0], outlier_obs
+        )
+        avg_coverage_cqrr = average_coverage(
+            outlier_intervals_cqrr[:, 1], outlier_intervals_cqrr[:, 0], outlier_obs
+        )
+        # Calculating SMIS for outliers
+        smis_mdn = average_interval_score_loss(
+            outlier_intervals_mdn[:, 1], outlier_intervals_mdn[:, 0], outlier_obs, alpha
+        )
+        smis_gp = average_interval_score_loss(
+            outlier_intervals_gp[:, 1], outlier_intervals_gp[:, 0], outlier_obs, alpha
+        )
+        smis_bart = average_interval_score_loss(
+            outlier_intervals_bart[:, 1],
+            outlier_intervals_bart[:, 0],
+            outlier_obs,
+            alpha,
+        )
+        smis_uacqrp = average_interval_score_loss(
+            outlier_intervals_uacqrp[:, 1],
+            outlier_intervals_uacqrp[:, 0],
+            outlier_obs,
+            alpha,
+        )
+        smis_uacqrs = average_interval_score_loss(
+            outlier_intervals_uacqrs[:, 1],
+            outlier_intervals_uacqrs[:, 0],
+            outlier_obs,
+            alpha,
+        )
+        smis_cqr = average_interval_score_loss(
+            outlier_intervals_cqr[:, 1], outlier_intervals_cqr[:, 0], outlier_obs, alpha
+        )
+        smis_cqrr = average_interval_score_loss(
+            outlier_intervals_cqrr[:, 1],
+            outlier_intervals_cqrr[:, 0],
+            outlier_obs,
+            alpha,
+        )
+        # storing coverage
+        coverage_outlier["MDN"][i] = avg_coverage_mdn
+        coverage_outlier["GP"][i] = avg_coverage_gp
+        coverage_outlier["BART"][i] = avg_coverage_bart
+        coverage_outlier["UACQR-P"][i] = avg_coverage_uacqrp
+        coverage_outlier["UACQR-S"][i] = avg_coverage_uacqrs
+        coverage_outlier["CQR"][i] = avg_coverage_cqr
+        coverage_outlier["CQR-r"][i] = avg_coverage_cqrr
+        # storing smis
+        smis_outlier["MDN"][i] = smis_mdn
+        smis_outlier["GP"][i] = smis_gp
+        smis_outlier["BART"][i] = smis_bart
+        smis_outlier["UACQR-P"][i] = smis_uacqrp
+        smis_outlier["UACQR-S"][i] = smis_uacqrs
+        smis_outlier["CQR"][i] = smis_cqr
+        smis_outlier["CQR-r"][i] = smis_cqrr
         # storing the ratios
         interval_lengths_ratio["MDN"][i] = mdn_ratio
         interval_lengths_ratio["GP"][i] = gp_ratio
@@ -405,7 +485,9 @@ def compare_outlier_inlier(
         interval_lengths_ratio["CQR-r"][i] = cqrr_ratio
     # returning the results
     interval_lengths_ratio_df = pd.DataFrame(interval_lengths_ratio)
-    return interval_lengths_ratio_df
+    coverage_outlier_df = pd.DataFrame(coverage_outlier)
+    smis_outlier_df = pd.DataFrame(smis_outlier)
+    return interval_lengths_ratio_df, coverage_outlier_df, smis_outlier_df
 
 
 # setting base_params
@@ -472,39 +554,7 @@ data_name = "airfoil"
 data = pd.read_csv(original_path + f"/data/processed/{data_name}.csv")
 
 # returning the predictions and X_test
-airfoil_ratio_dict = compare_outlier_inlier(
-    data=data,
-    n_rep=50,
-    base_params=base_params,
-    uacqr_params=uacqr_params,
-    mdn_params=mdn_params,
-    gp_params=gp_params,
-    bart_params=bart_params,
-    alpha=0.1,
-    prop_test=0.2,
-    prop_train=0.5,
-    major_seed=45,
-)
-
-# Compute the mean and standard deviation of each column in the DataFrame
-airfoil_ratio_dict = airfoil_ratio_dict.round(3)
-mean_std_df = airfoil_ratio_dict.agg(["mean", "std"])
-mean_std_df.loc["std"] = mean_std_df.loc["std"] / np.sqrt(50)
-mean_std_df = mean_std_df.round(3)
-mean_std_df
-
-# Save the DataFrame to a CSV file
-mean_std_df.to_csv(
-    original_path + f"/Experiments_code/{data_name}_mean_std.csv", index=True
-)
-
-
-# second dataset: winered
-data_name = "winewhite"
-data = pd.read_csv(original_path + f"/data/processed/{data_name}.csv")
-
-# returning the predictions and X_test
-winewhite_ratio_dict = compare_outlier_inlier(
+airfoil_ratio_dict, airfoil_cover_dict, airfoil_smis_dict = compare_outlier_inlier(
     data=data,
     n_rep=30,
     base_params=base_params,
@@ -519,8 +569,79 @@ winewhite_ratio_dict = compare_outlier_inlier(
 )
 
 # Compute the mean and standard deviation of each column in the DataFrame
+airfoil_ratio_dict = airfoil_ratio_dict.round(3)
+mean_std_df = airfoil_ratio_dict.agg(["mean", "std"])
+mean_std_df.loc["std"] = mean_std_df.loc["std"] / np.sqrt(30)
+mean_std_df = mean_std_df.round(3)
+mean_std_df
+
+# Save the DataFrame to a CSV file
+mean_std_df.to_csv(original_path + f"/{data_name}_mean_std.csv", index=True)
+
+airfoil_cover_dict = airfoil_cover_dict.round(3)
+mean_std_cover_df = airfoil_cover_dict.agg(["mean", "std"])
+mean_std_cover_df.loc["std"] = mean_std_cover_df.loc["std"] / np.sqrt(30)
+mean_std_cover_df = mean_std_cover_df.round(3)
+mean_std_cover_df
+
+# Save the DataFrame to a CSV file
+mean_std_cover_df.to_csv(original_path + f"/{data_name}_mean_std_cover.csv", index=True)
+
+airfoil_smis_dict = airfoil_smis_dict.round(3)
+mean_std_smis_df = airfoil_smis_dict.agg(["mean", "std"])
+mean_std_smis_df.loc["std"] = mean_std_smis_df.loc["std"] / np.sqrt(30)
+mean_std_smis_df = mean_std_smis_df.round(3)
+mean_std_smis_df
+
+# Save the DataFrame to a CSV file
+mean_std_smis_df.to_csv(original_path + f"/{data_name}_mean_std_smis.csv", index=True)
+
+
+# second dataset: winered
+data_name = "winewhite"
+data = pd.read_csv(original_path + f"/data/processed/{data_name}.csv")
+
+# returning the predictions and X_test
+winewhite_ratio_dict, winewhite_cover_dict, winewhite_smis_dict = (
+    compare_outlier_inlier(
+        data=data,
+        n_rep=30,
+        base_params=base_params,
+        uacqr_params=uacqr_params,
+        mdn_params=mdn_params,
+        gp_params=gp_params,
+        bart_params=bart_params,
+        alpha=0.1,
+        prop_test=0.2,
+        prop_train=0.5,
+        major_seed=45,
+    )
+)
+
+# Compute the mean and standard deviation of each column in the DataFrame
 winewhite_ratio_dict = winewhite_ratio_dict.round(3)
 mean_std_df = winewhite_ratio_dict.agg(["mean", "std"])
 mean_std_df.loc["std"] = mean_std_df.loc["std"] / np.sqrt(30)
 mean_std_df = mean_std_df.round(3)
 mean_std_df
+
+# Save the DataFrame to a CSV file
+mean_std_df.to_csv(original_path + f"/{data_name}_mean_std.csv", index=True)
+
+winewhite_cover_dict = winewhite_cover_dict.round(3)
+mean_std_cover_df = winewhite_cover_dict.agg(["mean", "std"])
+mean_std_cover_df.loc["std"] = mean_std_cover_df.loc["std"] / np.sqrt(30)
+mean_std_cover_df = mean_std_cover_df.round(3)
+mean_std_cover_df
+
+# Save the DataFrame to a CSV file
+mean_std_cover_df.to_csv(original_path + f"/{data_name}_mean_std_cover.csv", index=True)
+
+winewhite_smis_dict = winewhite_smis_dict.round(3)
+mean_std_smis_df = winewhite_smis_dict.agg(["mean", "std"])
+mean_std_smis_df.loc["std"] = mean_std_smis_df.loc["std"] / np.sqrt(30)
+mean_std_smis_df = mean_std_smis_df.round(3)
+mean_std_smis_df
+
+# Save the DataFrame to a CSV file
+mean_std_smis_df.to_csv(original_path + f"/{data_name}_mean_std_smis.csv", index=True)
