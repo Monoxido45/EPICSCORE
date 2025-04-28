@@ -1,11 +1,18 @@
-# testing coverage and interval length given outlier detection
+# importing the functions from our package
 from Epistemic_CP.epistemic_cp import ECP_split
-from Epistemic_CP.scores import QuantileScore
+from Epistemic_CP.scores import RegressionScore
 from Epistemic_CP.utils import (
     average_coverage,
     average_interval_score_loss,
     compute_interval_length,
     corr_coverage_widths,
+    Net_reg,
+)
+
+from Epistemic_CP.epistemic_cp import (
+    MondrianRegressionSplit,
+    LocalRegressionSplit,
+    RegressionSplit,
 )
 
 # base packages
@@ -34,19 +41,10 @@ original_path = os.getcwd()
 
 # folder path
 folder_path = "/Experiments_code"
-os.chdir(original_path + folder_path)
-
-from uacqr import uacqr
-
-# returning to original path
-os.chdir(original_path)
 
 # fixing random generator and torch seeds
 torch.manual_seed(0)
 torch.cuda.manual_seed(0)
-CHECKPOINT_INTERVAL = 10
-
-data_path = original_path + folder_path + "/pickle_files/{}_data".format("airfoil")
 
 
 # different seeds generated for splitting data
@@ -125,10 +123,10 @@ def adjust_ecp_obj_with_methods(
 def fit_and_return_pred_intervals(
     data,
     base_params,
-    uacqr_params,
     mdn_params,
     gp_params,
     bart_params,
+    is_fitted=True,
     alpha=0.1,
     random_seed=45,
     prop_test=0.2,
@@ -148,31 +146,58 @@ def fit_and_return_pred_intervals(
         test_size=prop_train,
         random_state=random_seed,
     )
-    # fitting base estimator and UACQR
-    uacqr_results = uacqr(
-        base_params,
-        q_lower=alpha / 2 * 100,
-        q_upper=(1 - alpha / 2) * 100,
-        model_type=uacqr_params["model_type"],
-        B=uacqr_params["B"],
-        random_state=random_seed,
-        uacqrs_agg=uacqr_params["uacqrs_agg"],
-    )
-    uacqr_results.fit(X_train, y_train)
-    uacqr_results.calibrate(X_calib, y_calib)
-    uacqr_pred_test = uacqr_results.predict_uacqr(X_test)
-    # Preparing Calibration and Test Data for ECP
+
+    # fitting base estimator
+    model = Net_reg(
+        input_dim=X_train.to_numpy().shape[1],
+        **base_params,
+    ).fit(X_train.to_numpy(), y_train.to_numpy())
+
+    # Preparing Calibration and Test Data
     X_calib = X_calib.to_numpy()
     y_calib = y_calib.to_numpy()
     X_test = X_test.to_numpy()
     y_test = y_test.to_numpy()
+
+    # fitting competing approaches
+    # regression split
+    reg_split_obj = RegressionSplit(
+        model,
+        alpha,
+        is_fitted,
+    )
+    reg_split_obj.fit(X_train, y_train)
+    reg_split_obj.calibrate(X_calib, y_calib)
+    pred_reg_split = reg_split_obj.predict(X_test)
+
+    # fitting mondrian
+    mondrian_obj = MondrianRegressionSplit(
+        base_model=model,
+        alpha=alpha,
+        is_fitted=is_fitted,
+        split=True,
+        k=30,
+    )
+    mondrian_obj.fit(X_train.to_numpy(), y_train.to_numpy())
+    mondrian_obj.calibrate(X_calib, y_calib)
+    pred_mondrian = mondrian_obj.predict(X_test)
+
+    # fitting weighted
+    weighted_obj = LocalRegressionSplit(
+        base_model=model,
+        alpha=alpha,
+        is_fitted=is_fitted,
+    )
+    weighted_obj.fit(X_train.to_numpy(), y_train.to_numpy())
+    weighted_obj.calibrate(X_calib, y_calib)
+    pred_weighted = weighted_obj.predict(X_test)
+
     # fitting the different ECP methods
     ecp_obj = ECP_split(
-        QuantileScore,
-        uacqr_results,
+        RegressionScore,
+        model,
         alpha=alpha,
         is_fitted=True,
-        base_model_type=uacqr_params["base_model_type"],
     )
     pred_ecp_mdn_test, pred_ecp_gp_test, pred_ecp_bart_test = (
         adjust_ecp_obj_with_methods(
@@ -192,7 +217,9 @@ def fit_and_return_pred_intervals(
         pred_ecp_mdn_test,
         pred_ecp_gp_test,
         pred_ecp_bart_test,
-        uacqr_pred_test,
+        pred_reg_split,
+        pred_mondrian,
+        pred_weighted,
         X_test,
         y_test,
     )
@@ -202,7 +229,6 @@ def compare_outlier_inlier(
     model_str,
     data,
     base_params,
-    uacqr_params,
     mdn_params,
     gp_params,
     bart_params,
@@ -260,13 +286,14 @@ def compare_outlier_inlier(
             pred_ecp_mdn_test,
             pred_ecp_gp_test,
             pred_ecp_bart_test,
-            uacqr_pred_test,
+            pred_reg_split,
+            pred_mondrian,
+            pred_weighted,
             X_test,
             y_test,
         ) = fit_and_return_pred_intervals(
             data=data,
             base_params=base_params,
-            uacqr_params=uacqr_params,
             mdn_params=mdn_params,
             gp_params=gp_params,
             bart_params=bart_params,
@@ -306,57 +333,16 @@ def compare_outlier_inlier(
         outlier_intervals_mdn = pred_ecp_mdn_test[outlier_indexes]
         outlier_intervals_gp = pred_ecp_gp_test[outlier_indexes]
         outlier_intervals_bart = pred_ecp_bart_test[outlier_indexes]
-        outlier_intervals_uacqrp = np.column_stack(
-            (
-                uacqr_pred_test["UACQR-P"]["lower"][outlier_indexes],
-                uacqr_pred_test["UACQR-P"]["upper"][outlier_indexes],
-            )
-        )
-        outlier_intervals_uacqrs = np.column_stack(
-            (
-                uacqr_pred_test["UACQR-S"]["lower"][outlier_indexes],
-                uacqr_pred_test["UACQR-S"]["upper"][outlier_indexes],
-            )
-        )
-        outlier_intervals_cqr = np.column_stack(
-            (
-                uacqr_pred_test["CQR"]["lower"][outlier_indexes],
-                uacqr_pred_test["CQR"]["upper"][outlier_indexes],
-            )
-        )
-        outlier_intervals_cqrr = np.column_stack(
-            (
-                uacqr_pred_test["CQR-r"]["lower"][outlier_indexes],
-                uacqr_pred_test["CQR-r"]["upper"][outlier_indexes],
-            )
-        )
+        outlier_intervals_reg = pred_reg_split[outlier_indexes]
+        outlier_intervals_mondrian = pred_mondrian[outlier_indexes]
+        outlier_intervals_weighted = pred_weighted[outlier_indexes]
+
         inlier_intervals_mdn = pred_ecp_mdn_test[most_inlier_idxs]
         inlier_intervals_gp = pred_ecp_gp_test[most_inlier_idxs]
         inlier_intervals_bart = pred_ecp_bart_test[most_inlier_idxs]
-        inlier_intervals_uacqrp = np.column_stack(
-            (
-                uacqr_pred_test["UACQR-P"]["lower"][most_inlier_idxs],
-                uacqr_pred_test["UACQR-P"]["upper"][most_inlier_idxs],
-            )
-        )
-        inlier_intervals_uacqrs = np.column_stack(
-            (
-                uacqr_pred_test["UACQR-S"]["lower"][most_inlier_idxs],
-                uacqr_pred_test["UACQR-S"]["upper"][most_inlier_idxs],
-            )
-        )
-        inlier_intervals_cqr = np.column_stack(
-            (
-                uacqr_pred_test["CQR"]["lower"][most_inlier_idxs],
-                uacqr_pred_test["CQR"]["upper"][most_inlier_idxs],
-            )
-        )
-        inlier_intervals_cqrr = np.column_stack(
-            (
-                uacqr_pred_test["CQR-r"]["lower"][most_inlier_idxs],
-                uacqr_pred_test["CQR-r"]["upper"][most_inlier_idxs],
-            )
-        )
+        inlier_intervals_reg = pred_reg_split[most_inlier_idxs]
+        inlier_intervals_mondrian = pred_mondrian[most_inlier_idxs]
+        inlier_intervals_weighted = pred_weighted[most_inlier_idxs]
 
         # Calculating ratio between lengths for each method
         mdn_ratio = np.mean(
@@ -386,40 +372,31 @@ def compare_outlier_inlier(
                 inlier_intervals_bart[:, 1], inlier_intervals_bart[:, 0]
             )
         )
-        uacqrp_ratio = np.mean(
+        reg_ratio = np.mean(
             compute_interval_length(
-                outlier_intervals_uacqrp[:, 1], outlier_intervals_uacqrp[:, 0]
+                outlier_intervals_reg[:, 1], outlier_intervals_reg[:, 0]
             )
         ) / np.mean(
             compute_interval_length(
-                inlier_intervals_uacqrp[:, 1], inlier_intervals_uacqrp[:, 0]
+                inlier_intervals_reg[:, 1], inlier_intervals_reg[:, 0]
             )
         )
-        uacqrs_ratio = np.mean(
+        weighted_ratio = np.mean(
             compute_interval_length(
-                outlier_intervals_uacqrs[:, 1], outlier_intervals_uacqrs[:, 0]
+                outlier_intervals_weighted[:, 1], outlier_intervals_weighted[:, 0]
             )
         ) / np.mean(
             compute_interval_length(
-                inlier_intervals_uacqrs[:, 1], inlier_intervals_uacqrs[:, 0]
+                inlier_intervals_weighted[:, 1], inlier_intervals_weighted[:, 0]
             )
         )
-        cqr_ratio = np.mean(
+        mondrian_ratio = np.mean(
             compute_interval_length(
-                outlier_intervals_cqr[:, 1], outlier_intervals_cqr[:, 0]
+                outlier_intervals_mondrian[:, 1], outlier_intervals_mondrian[:, 0]
             )
         ) / np.mean(
             compute_interval_length(
-                inlier_intervals_cqr[:, 1], inlier_intervals_cqr[:, 0]
-            )
-        )
-        cqrr_ratio = np.mean(
-            compute_interval_length(
-                outlier_intervals_cqrr[:, 1], outlier_intervals_cqrr[:, 0]
-            )
-        ) / np.mean(
-            compute_interval_length(
-                inlier_intervals_cqrr[:, 1], inlier_intervals_cqrr[:, 0]
+                inlier_intervals_mondrian[:, 1], inlier_intervals_mondrian[:, 0]
             )
         )
 
@@ -433,17 +410,18 @@ def compare_outlier_inlier(
         avg_coverage_bart = average_coverage(
             outlier_intervals_bart[:, 1], outlier_intervals_bart[:, 0], outlier_obs
         )
-        avg_coverage_uacqrp = average_coverage(
-            outlier_intervals_uacqrp[:, 1], outlier_intervals_uacqrp[:, 0], outlier_obs
+        avg_coverage_reg = average_coverage(
+            outlier_intervals_reg[:, 1], outlier_intervals_reg[:, 0], outlier_obs
         )
-        avg_coverage_uacqrs = average_coverage(
-            outlier_intervals_uacqrs[:, 1], outlier_intervals_uacqrs[:, 0], outlier_obs
+        avg_coverage_weighted = average_coverage(
+            outlier_intervals_weighted[:, 1],
+            outlier_intervals_weighted[:, 0],
+            outlier_obs,
         )
-        avg_coverage_cqr = average_coverage(
-            outlier_intervals_cqr[:, 1], outlier_intervals_cqr[:, 0], outlier_obs
-        )
-        avg_coverage_cqrr = average_coverage(
-            outlier_intervals_cqrr[:, 1], outlier_intervals_cqrr[:, 0], outlier_obs
+        avg_coverage_mondrian = average_coverage(
+            outlier_intervals_mondrian[:, 1],
+            outlier_intervals_mondrian[:, 0],
+            outlier_obs,
         )
 
         # Calculating SMIS for outliers
@@ -459,24 +437,21 @@ def compare_outlier_inlier(
             outlier_obs,
             alpha,
         )
-        smis_uacqrp = average_interval_score_loss(
-            outlier_intervals_uacqrp[:, 1],
-            outlier_intervals_uacqrp[:, 0],
+        smis_reg = average_interval_score_loss(
+            outlier_intervals_reg[:, 1],
+            outlier_intervals_reg[:, 0],
             outlier_obs,
             alpha,
         )
-        smis_uacqrs = average_interval_score_loss(
-            outlier_intervals_uacqrs[:, 1],
-            outlier_intervals_uacqrs[:, 0],
+        smis_weighted = average_interval_score_loss(
+            outlier_intervals_weighted[:, 1],
+            outlier_intervals_weighted[:, 0],
             outlier_obs,
             alpha,
         )
-        smis_cqr = average_interval_score_loss(
-            outlier_intervals_cqr[:, 1], outlier_intervals_cqr[:, 0], outlier_obs, alpha
-        )
-        smis_cqrr = average_interval_score_loss(
-            outlier_intervals_cqrr[:, 1],
-            outlier_intervals_cqrr[:, 0],
+        smis_mondrian = average_interval_score_loss(
+            outlier_intervals_mondrian[:, 1],
+            outlier_intervals_mondrian[:, 0],
             outlier_obs,
             alpha,
         )
@@ -488,37 +463,33 @@ def compare_outlier_inlier(
                     "ECP-MDN",
                     "ECP-GP",
                     "ECP-BART",
-                    "UACQR-P",
-                    "UACQR-S",
-                    "CQR-r",
-                    "CQR",
+                    "Reg-split",
+                    "Weighted",
+                    "Mondrian",
                 ],
                 "Interval Length Ratio": [
                     mdn_ratio,
                     gp_ratio,
                     bart_ratio,
-                    uacqrp_ratio,
-                    uacqrs_ratio,
-                    cqrr_ratio,
-                    cqr_ratio,
+                    reg_ratio,
+                    weighted_ratio,
+                    mondrian_ratio,
                 ],
                 "Coverage outlier": [
                     avg_coverage_mdn,
                     avg_coverage_gp,
                     avg_coverage_bart,
-                    avg_coverage_uacqrp,
-                    avg_coverage_uacqrs,
-                    avg_coverage_cqrr,
-                    avg_coverage_cqr,
+                    avg_coverage_reg,
+                    avg_coverage_weighted,
+                    avg_coverage_mondrian,
                 ],
                 "SMIS outlier": [
                     smis_mdn,
                     smis_gp,
                     smis_bart,
-                    smis_uacqrp,
-                    smis_uacqrs,
-                    smis_cqrr,
-                    smis_cqr,
+                    smis_reg,
+                    smis_weighted,
+                    smis_mondrian,
                 ],
             }
         )
@@ -558,46 +529,12 @@ def compare_outlier_inlier(
     return all_results, summary
 
 
-catboost_params = {
-    "iterations": 1000,
-    "learning_rate": 1e-3,
-    "depth": 6,  # default value
-    "l2_leaf_reg": 3,  # default value
-    "random_strength": 1,  # default value
-    "bagging_temperature": 1,  # default value
-    "od_type": "Iter",
-    "od_wait": 50,
-    "use_best_model": False,
-}
-
-# adding quantile neural network parameters
-nnet_params = {
-    "dropout": 0.05,
-    "epochs": 200,
-    "hidden_size": 200,
-    "lr": 1e-3,
-    "batch_size": 32,
-    "normalize": True,
-    "weight_decay": 1e-7,
-    "epoch_model_tracking": True,
-    "drop_last": True,
-    "undo_quantile_crossing": True,
-}
-
-# uacqr_params for catboost
-uacqr_params = {
-    "model_type": "catboost",
-    "B": 999,
-    "uacqrs_agg": "std",
-    "base_model_type": "Quantile",
-}
-
-# uacqr_params for neural network
-uacqr_params_net = {
-    "model_type": "neural_net",
-    "B": nnet_params["epochs"] - 1,
-    "uacqrs_agg": "std",
-    "base_model_type": "Quantile",
+# models parameters
+net_params = {
+    "epochs": 750,
+    "batch_size": 35,
+    "patience": 30,
+    "random_state": 450,
 }
 
 mdn_params = {
@@ -609,8 +546,9 @@ mdn_params = {
     "epochs": 2000,
     "scale": True,
     "batch_size": 40,
-    "normalize_y": True,
     "verbose": 0,
+    "normalize_y": True,
+    "log_y": False,
     "type": "gaussian",
 }
 
@@ -626,7 +564,7 @@ gp_params = {
 }
 
 bart_params = {
-    "epistemic_model": "BART_heteroscedastic",
+    "epistemic_model": "BART",
     "m": 100,
     "var": "heteroscedastic",
     "normalize_y": True,
@@ -634,31 +572,25 @@ bart_params = {
 }
 
 alpha = 0.1
-if __name__ == "__main__":
-    print("We will now compute all conformal statistics for real data")
-    model = input("Which model would you like to fit as base model? ")
+CHECKPOINT_INTERVAL = 10
 
+
+if __name__ == "__main__":
+    print(
+        "We will now compute all conformal statistics for real data in the regression setting"
+    )
+    model = input("Which model would you like to fit as base model? ")
     data_name = input(
         "Which dataset would you like to use (e.g., 'bike' or 'winewhite')? "
     )
     metrics_filename = (
-        input("Enter the filename to save metrics (e.g., 'metrics_bike'): ")
+        input("Enter the filename to save metrics (e.g., 'metrics_bike.csv'): ")
         + "_"
         + model
         + "_outliers.csv"
     )
     it = int(input("How many iterations? "))
-
-    if model == "catboost":
-        print("Starting experiment with CatBoost as base model")
-        base_params = catboost_params
-        uacqr_params = uacqr_params
-    elif model == "nnet":
-        print("Starting experiment with Neural Network as base model")
-        base_params = nnet_params
-        uacqr_params = uacqr_params_net
-    else:
-        print("Invalid model. Please choose either 'catboost' or 'nnet'.")
+    print("Starting real data experiment")
 
     # Function to check if the user wants to stop
     def check_for_termination():
@@ -670,7 +602,6 @@ if __name__ == "__main__":
 
     # Load data for the specified dataset
     data = pd.read_csv(original_path + f"/data/processed/{data_name}.csv")
-
     if data.shape[0] > 10000:
         mdn_params["batch_size"] = 125
         gp_params["batch_size"] = 125
@@ -679,16 +610,16 @@ if __name__ == "__main__":
     if data_name == "WEC":
         mdn_params["batch_size"] = 250
         gp_params["batch_size"] = 250
+        net_params["batch_size"] = 150
 
     # Compute metrics for the specified dataset
     all_results, metrics = compare_outlier_inlier(
         model_str=model,
         data=data,
-        base_params=base_params,
+        base_params=net_params,
         mdn_params=mdn_params,
         gp_params=gp_params,
         bart_params=bart_params,
-        uacqr_params=uacqr_params,
         alpha=alpha,
         seed_initial=45,
         n_rep=it,
