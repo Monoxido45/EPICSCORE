@@ -7,22 +7,36 @@ original_path = os.getcwd()
 folder_path = "/Experiments_code/pickle_files/"
 
 
-def read_metrics_files(file_names, metrics, idx, reg=False):
+def read_metrics_files(file_names, metrics, idx, reg=False, outlier=False):
     # Create DataFrame with datasets names
     dataframe = pd.DataFrame({"Dataset": file_names})
     for file_name in file_names:
         if not reg:
-            file_path = (
-                original_path
-                + folder_path
-                + f"{file_name}_data/{file_name}_metrics.csv"
-            )
+            if not outlier:
+                file_path = (
+                    original_path
+                    + folder_path
+                    + f"{file_name}_data/{file_name}_metrics.csv"
+                )
+            else:
+                file_path = (
+                    original_path
+                    + folder_path
+                    + f"{file_name}_data/{file_name}_metrics_catboost_outliers.csv"
+                )
         else:
-            file_path = (
-                original_path
-                + folder_path
-                + f"{file_name}_data/reg_{file_name}_metrics.csv"
-            )
+            if not outlier:
+                file_path = (
+                    original_path
+                    + folder_path
+                    + f"{file_name}_data/reg_{file_name}_metrics.csv"
+                )
+            else:
+                file_path = (
+                    original_path
+                    + folder_path
+                    + f"{file_name}_data/{file_name}_metrics_regression_outliers.csv"
+                )
         try:
             data = pd.read_csv(file_path)
 
@@ -75,46 +89,109 @@ file_names = [
 
 
 # Saving each results in pickle files
-def save_all_res(file_names, metrics, reg=False):
-    # marginal coverage
-    result_cover = read_metrics_files(file_names, metrics, [1, 2], reg=reg)
-    # AISL
-    result_aisl = read_metrics_files(file_names, metrics, [3, 4], reg=reg)
-    # IL
-    result_il = read_metrics_files(file_names, metrics, [5, 6], reg=reg)
-    # pcor
-    result_pcor = read_metrics_files(file_names, metrics, [7, 8], reg=reg)
+def save_all_res(file_names, metrics, reg=False, outlier=False):
+    if not outlier:
+        # marginal coverage
+        result_cover = read_metrics_files(file_names, metrics, [1, 2], reg=reg)
+        # AISL
+        result_aisl = read_metrics_files(file_names, metrics, [3, 4], reg=reg)
+        # IL
+        result_il = read_metrics_files(file_names, metrics, [5, 6], reg=reg)
+        # pcor
+        result_pcor = read_metrics_files(file_names, metrics, [7, 8], reg=reg)
 
-    if not reg:
-        os.makedirs(original_path + "/Experiments_code/results", exist_ok=True)
-        result_cover.to_pickle(
-            original_path + "/Experiments_code/" + "results/result_cover.pkl"
-        )
-        result_aisl.to_pickle(
-            original_path + "/Experiments_code/" + "results/result_aisl.pkl"
-        )
-        result_il.to_pickle(
-            original_path + "/Experiments_code/" + "results/result_il.pkl"
-        )
-        result_pcor.to_pickle(
-            original_path + "/Experiments_code/" + "results/result_pcor.pkl"
-        )
+        if not reg:
+            os.makedirs(original_path + "/Experiments_code/results", exist_ok=True)
+            result_cover.to_pickle(
+                original_path + "/Experiments_code/" + "results/result_cover.pkl"
+            )
+            result_aisl.to_pickle(
+                original_path + "/Experiments_code/" + "results/result_aisl.pkl"
+            )
+            result_il.to_pickle(
+                original_path + "/Experiments_code/" + "results/result_il.pkl"
+            )
+            result_pcor.to_pickle(
+                original_path + "/Experiments_code/" + "results/result_pcor.pkl"
+            )
+        else:
+            os.makedirs(original_path + "Experiments_code/results", exist_ok=True)
+            result_cover.to_pickle(
+                original_path + "/Experiments_code/" + "results/reg_result_cover.pkl"
+            )
+            result_aisl.to_pickle(
+                original_path + "/Experiments_code/" + "results/reg_result_aisl.pkl"
+            )
+            result_il.to_pickle(
+                original_path + "/Experiments_code/" + "results/reg_result_il.pkl"
+            )
+            result_pcor.to_pickle(
+                original_path + "/Experiments_code/" + "results/reg_result_pcor.pkl"
+            )
+
+        return [result_cover, result_aisl, result_il, result_pcor]
     else:
-        os.makedirs(original_path + "Experiments_code/results", exist_ok=True)
-        result_cover.to_pickle(
-            original_path + "/Experiments_code/" + "results/reg_result_cover.pkl"
+        # ratio
+        result_ratio = read_metrics_files(
+            file_names,
+            metrics,
+            [1, 2],
+            reg=reg,
+            outlier=outlier,
         )
-        result_aisl.to_pickle(
-            original_path + "/Experiments_code/" + "results/reg_result_aisl.pkl"
-        )
-        result_il.to_pickle(
-            original_path + "/Experiments_code/" + "results/reg_result_il.pkl"
-        )
-        result_pcor.to_pickle(
-            original_path + "/Experiments_code/" + "results/reg_result_pcor.pkl"
+        # coverage outlier
+        result_cover = read_metrics_files(
+            file_names,
+            metrics,
+            [3, 4],
+            reg=reg,
+            outlier=outlier,
         )
 
-    return [result_cover, result_aisl, result_il, result_pcor]
+        # AISL outlier
+        result_aisl = read_metrics_files(
+            file_names,
+            metrics,
+            [5, 6],
+            reg=reg,
+            outlier=outlier,
+        )
+
+        if not reg:
+            os.makedirs(original_path + "/Experiments_code/results", exist_ok=True)
+            result_ratio.to_pickle(
+                original_path
+                + "/Experiments_code/"
+                + "results/result_ratio_outlier.pkl"
+            )
+            result_aisl.to_pickle(
+                original_path + "/Experiments_code/" + "results/result_aisl_outlier.pkl"
+            )
+            result_cover.to_pickle(
+                original_path
+                + "/Experiments_code/"
+                + "results/result_cover_outlier.pkl"
+            )
+
+        else:
+            os.makedirs(original_path + "Experiments_code/results", exist_ok=True)
+            result_cover.to_pickle(
+                original_path
+                + "/Experiments_code/"
+                + "results/reg_result_cover_outlier.pkl"
+            )
+            result_aisl.to_pickle(
+                original_path
+                + "/Experiments_code/"
+                + "results/reg_result_aisl_outlier.pkl"
+            )
+            result_ratio.to_pickle(
+                original_path
+                + "/Experiments_code/"
+                + "results/reg_result_ratio_outlier.pkl"
+            )
+
+        return [result_ratio, result_cover, result_aisl]
 
 
 res_list = save_all_res(file_names, metrics)
@@ -151,7 +228,50 @@ res_list = save_all_res(file_names, metrics, reg=True)
 print(res_list)
 
 
-a = np.nan
+# new additional outliers/inliers results
+# for quantile regression
+metrics = ["ECP-MDN", "ECP-BART", "ECP-GP", "CQR", "CQR-r", "UACQR-P", "UACQR-S"]
+file_names = [
+    "airfoil",
+    "bike",
+    "concrete",
+    "cycle",
+    "electric",
+    "homes",
+    "meps19",
+    "protein",
+    "star",
+    "superconductivity",
+    "WEC",
+    "winered",
+    "winewhite",
+]
+
+res_list = save_all_res(file_names, metrics, reg=False, outlier=True)
+print(res_list)
+
+
+# for regression
+metrics = ["ECP-MDN", "ECP-BART", "ECP-GP", "Mondrian", "Reg-split", "Weighted"]
+file_names = [
+    "airfoil",
+    "bike",
+    "concrete",
+    "cycle",
+    "electric",
+    "homes",
+    "meps19",
+    "protein",
+    "star",
+    "superconductivity",
+    "WEC",
+    "winered",
+    "winewhite",
+]
+
+res_list = save_all_res(file_names, metrics, reg=True, outlier=True)
+print(res_list)
+
 
 print(f"\\begin{{tabular}}{{l{'c' * len(metrics)}}}\\toprule")
 print("Dataset & " + " & ".join(metrics) + "\\\\\\midrule")
