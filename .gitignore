@@ -16,3 +16,4 @@ Epistemic_CP.egg-info
 build/lib/
 build/
 Figures_and_tables/cifar-100-python
+Experiments_code/catboost_info
