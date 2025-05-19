@@ -208,6 +208,10 @@ class APSScore(Scores):
         X_calib,
         y_calib,
         ensemble=False,
+        return_ordering=False,
+        raps=False,
+        lam_reg=0.01,
+        k_reg=5,
     ):
         """
         Compute the regression conformity score in the calibration set
@@ -223,18 +227,50 @@ class APSScore(Scores):
 
         cal_pi = cal_probs.argsort(1)[:, ::-1]
 
-        cal_srt = np.take_along_axis(
-            cal_probs,
-            cal_pi,
-            axis=1,
-        ).cumsum(axis=1)
-
-        cal_scores = np.take_along_axis(
-                cal_srt,
-                cal_pi.argsort(axis=1),
+        # returning only the corresponding conformity score
+        if not return_ordering:
+            cal_srt = np.take_along_axis(
+                cal_probs,
+                cal_pi,
                 axis=1,
-            )[range(n), y_calib]
-        return cal_scores
+            ).cumsum(axis=1)
+
+            self.raps = raps
+            if raps:
+                self.lam_reg = lam_reg
+                self.k_reg = k_reg
+
+                reg_vec = np.array(
+                    (
+                        k_reg
+                        * [
+                            0,
+                        ]
+                    )
+                    + (
+                        (cal_probs.shape[1] - k_reg)
+                        * [
+                            lam_reg,
+                        ]
+                    )
+                )[None, :]
+                cal_srt_reg = cal_srt + reg_vec
+                cal_L = np.where(cal_pi == y_calib[:, None])[1]
+                cal_scores = (
+                    cal_srt_reg.cumsum(axis=1)[np.arange(n), cal_L]
+                    - np.random.rand(n) * cal_srt_reg[np.arange(n), cal_L]
+                )
+                self.reg_vec = reg_vec
+            else:
+                cal_scores = np.take_along_axis(
+                    cal_srt,
+                    cal_pi.argsort(axis=1),
+                    axis=1,
+                )[range(n), y_calib]
+            return cal_scores
+        # returning the conformity scores for all classes
+        else:
+            return cal_pi
 
     def predict(self, X_test, cutoff, ensemble=False):
         """
@@ -256,6 +292,7 @@ class APSScore(Scores):
 
             test_pi = pred_probs.argsort(1)[:, ::-1]
             test_score = np.take_along_axis(pred_probs, test_pi, axis=1).cumsum(axis=1)
+
             prediction_sets = np.take_along_axis(
                 np.less_equal(test_score, cutoff),
                 test_pi.argsort(axis=1),
@@ -263,14 +300,24 @@ class APSScore(Scores):
             )
         else:
             test_pi = pred_probs.argsort(1)[:, ::-1]
-            test_score = np.take_along_axis(pred_probs, test_pi, axis=1).cumsum(axis=1)
-                
-            test_score = np.take_along_axis(pred_probs, test_pi, axis=1).cumsum(
-                axis=1
-            )
-            prediction_sets = np.take_along_axis(
-                test_score <= cutoff, test_pi.argsort(axis=1), axis=1
-            )
+
+            if self.raps:
+                test_score = np.take_along_axis(pred_probs, test_pi, axis=1)
+                test_score_reg = test_score + self.reg_vec
+                test_score_reg_cumsum = test_score_reg.cumsum(axis=1)
+                indicators = (test_score_reg_cumsum - test_score_reg) <= cutoff
+                prediction_sets = np.take_along_axis(
+                    indicators, test_pi.argsort(axis=1), axis=1
+                )
+            else:
+                test_score = np.take_along_axis(
+                    pred_probs,
+                    test_pi,
+                    axis=1,
+                ).cumsum(axis=1)
+                prediction_sets = np.take_along_axis(
+                    test_score <= cutoff, test_pi.argsort(axis=1), axis=1
+                )
 
         return prediction_sets
 
