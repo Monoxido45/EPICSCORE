@@ -53,6 +53,7 @@ def adjust_ecp_obj_with_methods(
     mdn_params,
     gp_params,
     bart_params,
+    ensemble,
 ):
     # fitting ecp_obj - MC dropout
     ecp_obj.fit(X_train, y_train)
@@ -70,6 +71,7 @@ def adjust_ecp_obj_with_methods(
         batch_size=mdn_params["batch_size"],
         verbose=mdn_params["verbose"],
         type=mdn_params["type"],
+        ensemble=ensemble,
     )
     pred_ecp_mdn_test = ecp_obj.predict(X_test)
 
@@ -85,6 +87,7 @@ def adjust_ecp_obj_with_methods(
         batch_size=gp_params["batch_size"],
         verbose=gp_params["verbose"],
         patience=gp_params["patience"],
+        ensemble=ensemble,
     )
     pred_ecp_gp_test = ecp_obj.predict(X_test)
 
@@ -98,6 +101,7 @@ def adjust_ecp_obj_with_methods(
         var=bart_params["var"],
         normalize_y=bart_params["normalize_y"],
         type=bart_params["type"],
+        ensemble=ensemble,
     )
     pred_ecp_bart_test = ecp_obj.predict(X_test)
     # deletting objects and removing from memory
@@ -108,6 +112,7 @@ def adjust_ecp_obj_with_methods(
 
 # computing metrics all methods
 def obtain_metrics_all_methods(
+    model_str,
     data,
     target_column,
     base_params,
@@ -135,7 +140,7 @@ def obtain_metrics_all_methods(
         os.makedirs(data_path)
 
     # Check if a checkpoint exists
-    checkpoint_filename = f"checkpoint_{data_name}"
+    checkpoint_filename = f"checkpoint_{data_name}_{model_str}"
     checkpoints = [
         f
         for f in os.listdir(data_path)
@@ -151,6 +156,7 @@ def obtain_metrics_all_methods(
 
         with open(latest_checkpoint, "rb") as f:
             checkpoint_data = pickle.load(f)
+
         all_results = checkpoint_data["all_results"]
         # seeds = checkpoint_data['seeds']
         start_iteration = checkpoint_data["iteration"]
@@ -179,6 +185,11 @@ def obtain_metrics_all_methods(
             random_state=seed,
             uacqrs_agg=uacqr_params["uacqrs_agg"],
         )
+
+        if model == "nnet":
+            X_train = X_train.astype(float)
+            X_calib = X_calib.astype(float)
+            X_test = X_test.astype(float)
 
         uacqr_results.fit(X_train, y_train)
         uacqr_results.calibrate(X_calib, y_calib)
@@ -210,6 +221,7 @@ def obtain_metrics_all_methods(
                 mdn_params,
                 gp_params,
                 bart_params,
+                ensemble=False,
             )
         )
 
@@ -468,7 +480,7 @@ def obtain_metrics_all_methods(
                 "all_results": all_results,
                 #'seeds': seeds
             }
-            with open(f"checkpoint_{data_name}.pkl", "wb") as f:
+            with open(f"checkpoint_{data_name}_{model_str}.pkl", "wb") as f:
                 pickle.dump(checkpoint, f)
             print(f"Checkpoint saved in iteration {i+1}")
 
@@ -487,6 +499,7 @@ def obtain_metrics_all_methods(
         .reset_index()
     )
 
+    # removing all checkpoints
     for f in os.listdir("."):
         if f.startswith("checkpoint_") and f.endswith(".pkl"):
             os.remove(f)
@@ -506,9 +519,32 @@ catboost_params = {
     "use_best_model": False,
 }
 
+# adding quantile neural network parameters
+nnet_params = {
+    "dropout": 0.05,
+    "epochs": 200,
+    "hidden_size": 200,
+    "lr": 1e-3,
+    "batch_size": 32,
+    "normalize": True,
+    "weight_decay": 1e-7,
+    "epoch_model_tracking": True,
+    "drop_last": True,
+    "undo_quantile_crossing": True,
+}
+
+# uacqr_params for catboost
 uacqr_params = {
     "model_type": "catboost",
     "B": 999,
+    "uacqrs_agg": "std",
+    "base_model_type": "Quantile",
+}
+
+# uacqr_params for neural network
+uacqr_params_net = {
+    "model_type": "neural_net",
+    "B": nnet_params["epochs"] - 1,
     "uacqrs_agg": "std",
     "base_model_type": "Quantile",
 }
@@ -551,19 +587,30 @@ n_it = 50
 CHECKPOINT_INTERVAL = 10
 
 if __name__ == "__main__":
-
     print("We will now compute all conformal statistics for real data")
     model = input("Which model would you like to fit as base model? ")
+
     data_name = input(
         "Which dataset would you like to use (e.g., 'bike' or 'winewhite')? "
     )
-    metrics_filename = input(
-        "Enter the filename to save metrics (e.g., 'metrics_bike.csv'): "
+    metrics_filename = (
+        input("Enter the filename to save metrics (e.g., 'metrics_bike'): ")
+        + "_"
+        + model
+        + ".csv"
     )
     it = int(input("How many iterations? "))
 
-    uacqr_params["base_model_type"] = model
-    print("Starting real data experiment")
+    if model == "catboost":
+        print("Starting experiment with CatBoost as base model")
+        base_params = catboost_params
+        uacqr_params = uacqr_params
+    elif model == "nnet":
+        print("Starting experiment with Neural Network as base model")
+        base_params = nnet_params
+        uacqr_params = uacqr_params_net
+    else:
+        print("Invalid model. Please choose either 'catboost' or 'nnet'.")
 
     # Function to check if the user wants to stop
     def check_for_termination():
@@ -575,6 +622,7 @@ if __name__ == "__main__":
 
     # Load data for the specified dataset
     data = pd.read_csv(original_path + f"/data/processed/{data_name}.csv")
+
     if data.shape[0] > 10000:
         mdn_params["batch_size"] = 125
         gp_params["batch_size"] = 125
@@ -586,9 +634,10 @@ if __name__ == "__main__":
 
     # Compute metrics for the specified dataset
     all_results, metrics = obtain_metrics_all_methods(
+        model,
         data,
         "target",
-        catboost_params,
+        base_params,
         mdn_params,
         gp_params,
         bart_params,
@@ -606,5 +655,5 @@ if __name__ == "__main__":
     metrics.to_csv(metrics_filename, index=False)
 
     # save all results
-    with open(f"all_metrics_{data_name}.pkl", "wb") as f:
+    with open(f"all_metrics_{data_name}_{model}.pkl", "wb") as f:
         pickle.dump(all_results, f)

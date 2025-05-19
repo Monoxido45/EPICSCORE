@@ -22,12 +22,13 @@ from Epistemic_CP.epistemic_models import (
     GP_model,
     GPApprox_model,
     BART_model,
+    MC_classifier,
 )
 
 
 class ECP_split(BaseEstimator):
     """
-    Epistemic Conformal Prediction class.
+    General Epistemic Conformal Prediction class applied to any continuous or approximately continuous conformity scores.
     """
 
     def __init__(
@@ -222,7 +223,7 @@ class ECP_split(BaseEstimator):
             )
 
         elif epistemic_model == "GP_variational":
-            #Initializing the variational GP model
+            # Initializing the variational GP model
             self.epistemic_obj = GPApprox_model(
                 num_inducing_points=kwargs.get("num_inducing_points", 100),
                 lr_variational=kwargs.get("lr_variational", 0.1),
@@ -389,6 +390,203 @@ class ECP_split(BaseEstimator):
         return pred
 
 
+class ECP_classification(BaseEstimator):
+    """
+    Epistemic Conformal Prediction class specialized for classification problems.
+    """
+
+    def __init__(
+        self,
+        nc_score,
+        base_model,
+        alpha,
+        is_fitted=False,
+        base_model_type=None,
+        **kwargs,
+    ):
+        """
+        Input: (i) nc_score (Scores class): Conformity score of choosing. It
+                can be specified by instantiating a conformal score class based on the Scores basic class.
+               (ii) base_model (BaseEstimator class): Base model with fit and predict methods to be embedded in the conformity score class.
+               (iii) alpha (float): Float between 0 and 1 specifying the miscoverage level of resulting prediction region.
+               (iv) base_model_type (bool): Boolean indicating whether the base model ouputs quantiles or not. Default is False.
+               (v) is_fitted (bool): Whether the base model is already fitted or not. Default is False.
+               (vi) **kwargs: Additional keyword arguments passed to fit base_model.
+        """
+        self.base_model_type = base_model_type
+        self.is_fitted = is_fitted
+        if ("Quantile" in str(nc_score)) or (base_model_type == True):
+            self.nc_score = nc_score(
+                base_model, is_fitted=is_fitted, alpha=alpha, **kwargs
+            )
+        else:
+            self.nc_score = nc_score(base_model, is_fitted=is_fitted, **kwargs)
+
+        # checking if base model is fitted
+        self.base_model = self.nc_score.base_model
+        self.alpha = alpha
+
+    def fit(
+        self,
+        X,
+        y,
+        bayes_model="BART",
+        random_seed_fit=45,
+        N_samples_MC=500,
+        n_cores=6,
+        progress=False,
+        **kwargs,
+    ):
+        """
+        Fit the base model embeded in the conformal score class to the training set and the predictive probability for each class y.
+        --------------------------------------------------------
+
+        Input: (i)    X: Training numpy feature matrix
+            (ii)   y: Training label array
+            (iii) bayes_model: Bayesian approach to fit the predictive probability for y.
+
+        Output: LocartSplit object
+        """
+        # fitting original classification non-conformity score
+        self.nc_score.fit(X, y)
+
+        # fitting predictive distribution for y
+        if bayes_model == "BART":
+            self.pred_model = BART_model(
+                m=kwargs.get("m", 100),
+                type="categorical",
+                var="None",
+                alpha=kwargs.get("alpha", 0.95),
+                beta=kwargs.get("beta", 2),
+                response=kwargs.get("response", "constant"),
+                split_prior=kwargs.get("split_prior", None),
+                separate_trees=kwargs.get("separate_trees", False),
+                n_cores=n_cores,
+                normalize_y=False,
+                progressbar=progress,
+            )
+
+            self.pred_model.fit(
+                X=X, y=y, n_sample=N_samples_MC, random_seed=random_seed_fit
+            )
+        elif bayes_model == "MC_dropout":
+            self.pred_model = MC_classifier(
+                input_shape=X.shape[1],
+                num_classes=len(np.unique(y)),
+                dropout_rate=kwargs.get("dropout_rate", 0.5),
+                hidden_layers=kwargs.get("hidden_layers", [64, 64]),
+            )
+
+            self.pred_model.fit(
+                X=X,
+                y=y,
+                proportion_train=kwargs.get("proportion_train", 0.7),
+                epochs=kwargs.get("epochs", 1000),
+                lr=kwargs.get("lr", 0.001),
+                gamma=kwargs.get("gamma", 0.99),
+                weight_decay=kwargs.get("weight_decay", 0.001),
+                batch_size=kwargs.get("batch_size", 100),
+                patience=kwargs.get("patience", 30),
+                verbose=kwargs.get("verbose", 0),
+                scale=kwargs.get("scale", True),
+                random_seed_fit=random_seed_fit,
+            )
+
+        return self
+
+    def calib(
+        self,
+        X_calib,
+        y_calib,
+        random_seed_fit=45,
+        ensemble=False,
+    ):
+        """
+        Calibrate conformity score using Predictive distribution.
+        --------------------------------------------------------
+        Input:
+            (i) X_calib (np.ndarray): Calibration numpy feature matrix
+            (ii) y_calib (np.ndarray): Calibration label array
+            (iii) random_seed_fit (int): Random seed used for fitting the epistemic model. Default is 45.
+            (iv) ensemble (bool): Whether the base model outputs three statistics (quantiles and median) or not. Default is False.
+
+        Output:
+            float: Vector of cutoffs.
+        """
+        # computing the original classification scores for existing y
+        cal_order = self.nc_score.compute(
+            X_calib, y_calib, ensemble=ensemble, return_ordering=True
+        )
+
+        # computing predictive probabilities for each class
+        predictive_y = self.pred_model.predict_pmf(
+            X_calib,
+            random_seed=random_seed_fit,
+        )
+
+        n = predictive_y.shape[0]
+        pred_srt = np.take_along_axis(
+            predictive_y,
+            cal_order,
+            axis=1,
+        ).cumsum(axis=1)
+
+        new_score = np.take_along_axis(
+            pred_srt,
+            cal_order.argsort(axis=1),
+            axis=1,
+        )[range(n), y_calib]
+
+        # determining cutoff
+        self.cutoff = np.quantile(
+            new_score,
+            np.ceil((n + 1) * (1 - self.alpha)) / n,
+        )
+
+        return self.cutoff
+
+    def predict(
+        self,
+        X_test,
+        random_seed=45,
+    ):
+        """
+        Predict 1 - alpha prediction regions for each test sample using epistemic cutoffs.
+        --------------------------------------------------------
+        Input: (i) X_test (np.ndarray): Test numpy feature matrix
+               (ii) N_samples_MC (int): Number of samples to simulate from MC dropout. Default is 500.
+               (iii) random_seed (int): Random seed fixed to generate samples. Used in MC dropout and BART.
+               (iv) ensemble (bool): Whether the base model outputs three statistics (quantiles and median) or not. Default is False.
+
+        Output: Prediction regions for each test sample.
+        """
+        # obtaining original score order
+        pred_probs = self.nc_score.base_model.predict_proba(X_test)
+        # ordering each class according to probability
+        test_pi = pred_probs.argsort(1)[:, ::-1]
+
+        # obtaining predictive distribution
+        predictive_y = self.pred_model.predict_pmf(
+            X_test,
+            random_seed=random_seed,
+        )
+
+        # using APS order to derive new conformal score
+        test_score = np.take_along_axis(
+            predictive_y,
+            test_pi,
+            axis=1,
+        ).cumsum(axis=1)
+
+        prediction_sets = np.take_along_axis(
+            np.less_equal(test_score, self.cutoff),
+            test_pi.argsort(axis=1),
+            axis=1,
+        )
+
+        return prediction_sets
+
+
 class QuantileSplit(BaseEstimator):
     """
     Conformalized Quantile Regression class
@@ -489,6 +687,9 @@ class APSSplit(BaseEstimator):
         base_model,
         alpha=0.1,
         is_fitted=False,
+        raps=False,
+        lam_reg=0.01,
+        k_reg=5,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -496,6 +697,9 @@ class APSSplit(BaseEstimator):
         self.nc_score = APSScore(base_model, is_fitted=is_fitted, **kwargs)
         self.alpha = alpha
         self.base_model = self.nc_score.base_model
+        self.raps = raps
+        self.lam_reg = lam_reg
+        self.k_reg = k_reg
 
     def fit(self, X_train, y_train):
         self.nc_score.fit(X_train, y_train)
@@ -504,6 +708,9 @@ class APSSplit(BaseEstimator):
         res = self.nc_score.compute(
             X_calib,
             y_calib,
+            raps=self.raps,
+            lam_reg=self.lam_reg,
+            k_reg=self.k_reg,
         )
         n = X_calib.shape[0]
         self.cutoff = np.quantile(res, q=np.ceil((n + 1) * (1 - self.alpha)) / n)

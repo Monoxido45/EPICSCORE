@@ -399,7 +399,7 @@ class MDN_model(BaseEstimator):
 
         return pi_predictions, mu_predictions, sigma_predictions
 
-    def predict(self, X_test):
+    def predict(self, X_test, y_test=None, return_params=False):
         """
         Make predictions with MDN base model.
 
@@ -422,6 +422,25 @@ class MDN_model(BaseEstimator):
             alphas = [self.alpha / 2, 1 - (self.alpha / 2)]
             quantiles_test = self.mixture_quantile(alphas, pi, mu, sigma)
             return quantiles_test
+        # density part
+        elif self.base_model_type == "density" and (y_test is not None):
+            # normalizing y_test if needed
+            if self.log_y:
+                y_test = st.boxcox(y_test, lmbda=self.lmbda)
+            if self.normalize_y:
+                y_test = self.y_scaler.transform(y_test.reshape(-1, 1)).flatten()
+
+            # transforming to tensor also if needed
+            if isinstance(y_test, np.ndarray):
+                y_test = torch.tensor(y_test, dtype=torch.float32)
+                density_test = self.mixture_density(y_test, pi, mu, sigma)
+            if return_params:
+                return density_test, pi, mu, sigma
+            else:
+                return density_test
+
+        elif self.base_model_type == "density" and (y_test is None):
+            return pi, mu, sigma
 
     def mixture_quantile(self, alphas, pi, mu, sigma, rng=0, N=1000):
         """
@@ -595,6 +614,203 @@ class MDN_model(BaseEstimator):
 
         return sample
 
+    # HPD related functions
+    def mixture_density(self, y_test, pi, mu, sigma):
+        """
+        Computes the density of the mixture of normal distributions for each mixture and score.
+
+        Input:
+            (i) pi (torch.Tensor): Mixture weights of shape (n_samples, n_components).
+            (ii) mu (torch.Tensor): Means of the components of shape (n_samples, n_components).
+            (iii) sigma (torch.Tensor): Standard deviations of the components of shape (n_samples, n_components).
+
+        Output:
+            (i) density_values (torch.Tensor): Tensor of shape (n_samples,) containing the density values
+            for each mixture and score.
+        """
+        if isinstance(pi, np.ndarray):
+            pi = torch.tensor(pi)
+        if isinstance(mu, np.ndarray):
+            mu = torch.tensor(mu)
+        if isinstance(sigma, np.ndarray):
+            sigma = torch.tensor(sigma)
+
+        y = y_test.view(-1, 1)
+
+        density_values = torch.sum(pi * gaussian_pdf(y, mu, sigma), dim=1)
+        return density_values
+
+    def mixture_cdf_density(self, y_test, X_test):
+        """
+        Computes the CDF of the mixture of normal distributions for each mixture and score.
+        Input:
+            (i) y_test (torch.Tensor): Tensor of shape (n_samples,) with the scores for which to compute the CDF.
+            (ii) X_test (torch.Tensor): Tensor of shape (n_samples, n_features) with the input data.
+        Output:
+            (i) CDF of density values (torch.Tensor): Tensor of shape (n_samples,) containing the CDF of the density for each testing sample
+        """
+        # first computing the density for observed values
+        dens_values, pi, mu, sigma = self.predict(X_test, y_test, return_params=True)
+
+        # sampling to derive CDF of density
+        sample = self.sample_from_mixture(pi, mu, sigma, N=1000)
+        sample = torch.tensor(sample, dtype=torch.float32)
+
+        # computing density for each sample
+        cdf_dens_values = np.zeros(y_test.shape[0])
+        for i in range(sample.shape[0]):
+            fixed_dens = dens_values[i].numpy()
+            pi_value, mu_value, sigma_value = pi[i], mu[i], sigma[i]
+            new_y = sample[i, :].reshape(-1, 1)
+
+            pi_repeated = pi_value.repeat(new_y.shape[0], 1)
+            mu_repeated = mu_value.repeat(new_y.shape[0], 1)
+            sigma_repeated = sigma_value.repeat(new_y.shape[0], 1)
+
+            # computing density for each sample
+            dens_values_sim = self.mixture_density(
+                new_y, pi_repeated, mu_repeated, sigma_repeated
+            ).numpy()
+
+            # compute the mean of the dens_values_sim that are less than the fixed density
+            cdf_dens_values[i] = np.mean((dens_values_sim <= fixed_dens) + 0)
+
+        return cdf_dens_values
+
+    def predict_cdf_cutoff(self, X, cutoff, num_samples=1000):
+        # predicting first the mixture parameters for X
+        pi, mu, sigma = self.predict(X)
+
+        # generating samples from the mixture
+        sample = self.sample_from_mixture(pi, mu, sigma, N=num_samples)
+        sample = torch.tensor(sample, dtype=torch.float32)
+
+        # computing density for each sample
+        cutoff_hpd = np.zeros(X.shape[0])
+        for i in range(sample.shape[0]):
+            pi_value, mu_value, sigma_value = pi[i], mu[i], sigma[i]
+            new_y = sample[i, :].reshape(-1, 1)
+
+            pi_repeated = pi_value.repeat(new_y.shape[0], 1)
+            mu_repeated = mu_value.repeat(new_y.shape[0], 1)
+            sigma_repeated = sigma_value.repeat(new_y.shape[0], 1)
+
+            # computing density for each sample
+            dens_values_sim = self.mixture_density(
+                new_y, pi_repeated, mu_repeated, sigma_repeated
+            )
+
+            # compute the mean of the dens_values_sim that are less
+            # than the cutoff
+            cutoff_hpd[i] = np.quantile(dens_values_sim.numpy(), cutoff)
+
+            # compute the mean of the dens_values_sim that are less
+            # than the fixed density
+        return cutoff_hpd
+
+    def predict_mixture_density(self, X, y_grid):
+        # predicting first the mixture parameters for X
+        pi, mu, sigma = self.predict(X)
+
+        if self.normalize_y:
+            y_grid = self.y_scaler.transform(
+                y_grid.reshape(-1, 1),
+            ).flatten()
+
+        if isinstance(y_grid, np.ndarray):
+            y_grid = torch.tensor(y_grid, dtype=torch.float32)
+
+        # computing density for each sample
+        dens_values = np.zeros((X.shape[0], y_grid.shape[0]))
+        for i in range(X.shape[0]):
+            pi_value, mu_value, sigma_value = pi[i], mu[i], sigma[i]
+            new_y = y_grid.reshape(-1, 1)
+
+            pi_repeated = pi_value.repeat(new_y.shape[0], 1)
+            mu_repeated = mu_value.repeat(new_y.shape[0], 1)
+            sigma_repeated = sigma_value.repeat(new_y.shape[0], 1)
+
+            # computing density for each sample
+            dens_values_sim = self.mixture_density(
+                new_y, pi_repeated, mu_repeated, sigma_repeated
+            )
+
+            # compute the mean of the dens_values_sim that are less
+            # than the cutoff
+            dens_values[i, :] = dens_values_sim.numpy()
+
+            # compute the mean of the dens_values_sim that are less
+            # than the fixed density
+        return dens_values
+
+    def mdn_generate_densities(self, pi, mu, sigma, rng=0):
+        if isinstance(rng, int):
+            rng = np.random.default_rng(42)
+
+        # Converting to numpy
+        pi_np = pi.detach().numpy()
+        mu_np = mu.detach().numpy()
+        sigma_np = sigma.detach().numpy()
+
+        n_mc, n_obs, n_comp = pi.shape
+        sample = np.zeros((n_obs, n_mc))
+
+        for i in range(n_obs):
+            for j in range(n_mc):
+                # normalizing pi
+                pi_i = pi_np[j, i, :]
+                pi_i = pi_i / pi_i.sum()
+
+                # sampling based on component
+                component = rng.choice(n_comp, size=1, p=pi_i)
+
+                if self.type == "gaussian":
+                    sample[i, j] = rng.normal(
+                        mu_np[j, i, component[0]], sigma_np[j, i, component[0]]
+                    )
+                # computing density for each sample
+                density = np.sum(
+                    pi_i
+                    * norm.pdf(
+                        sample[i, j],
+                        loc=mu_np[j, i, :],
+                        scale=sigma_np[j, i, :],
+                    )
+                )
+                sample[i, j] = density
+        return sample
+
+    def mixture_cdf_no_scale(self, sample, scores):
+        """
+        Computes the CDF of the mixture of normal distributions for each mixture and score
+        using samples generated by Monte Carlo.
+
+        Input:
+        (i) sample (torch.Tensor or np.ndarray): Tensor of shape (n_samples, n_mcdropout),
+        where n_samples is the number of samples, n_mcdropout is the number of mixtures generated by MC Dropout.
+        (ii) scores (torch.Tensor or np.ndarray): Tensor of shape (n_samples,) with the scores for which to compute the CDF.
+
+        Output:
+        (i) cdf_values (torch.Tensor): Tensor of shape (n_samples,) containing the CDF values
+        for each mixture and score.
+        """
+
+        if isinstance(sample, np.ndarray):
+            sample = torch.tensor(sample)
+        if isinstance(scores, np.ndarray):
+            scores = torch.tensor(scores)
+
+        n_samples, n_mixtures = sample.shape
+
+        cdf_values = torch.zeros((n_samples,))
+
+        for j in range(n_samples):
+            score = scores[j]
+
+            cdf_values[j] = torch.sum(sample[j, :] <= score).float() / n_mixtures
+
+        return cdf_values
+
     def mixture_cdf(self, sample, scores):
         """
         Computes the CDF of the mixture of normal distributions for each mixture and score
@@ -663,6 +879,294 @@ class MDN_model(BaseEstimator):
                 quantiles[j, k] = np.quantile(samples[j, :], prob)
 
         return quantiles
+
+
+#### Neural Network Classifier Base Architecture
+class NN_base(nn.Module):
+    def __init__(self, input_shape, num_classes, hidden_layers, dropout_rate=0.4):
+        """
+        Flexible NN architecture for classification
+
+        Input: (i) input_shape (int): Input dimension.
+               (ii) num_classes (int): Number of output classes.
+               (iii) hidden_layers (list): List containing the number of neurons per hidden layer.
+               (iv) dropout_rate (float): Dropout rate applied to each layer. Default is 0.4.
+        """
+        super(NN_base, self).__init__()
+        self.layers = nn.ModuleList()
+        self.batch_norms = nn.ModuleList()
+        self.dropouts = nn.ModuleList()
+
+        # Creating hidden layers dynamically
+        prev_units = input_shape
+        for units in hidden_layers:
+            self.layers.append(nn.Linear(prev_units, units))
+            self.batch_norms.append(nn.BatchNorm1d(units))
+            self.dropouts.append(nn.Dropout(dropout_rate))
+            prev_units = units
+
+        self.fc_out = nn.Linear(prev_units, num_classes)
+
+    def forward(self, x):
+        for layer, bn, dropout in zip(self.layers, self.batch_norms, self.dropouts):
+            x = F.relu(layer(x))
+            x = bn(x)
+            x = dropout(x)
+        x = self.fc_out(x)
+        return x
+
+
+#### MC Dropout Classifier
+class MC_classifier(BaseEstimator):
+    """
+    Monte Carlo Dropout Classifier.
+    """
+
+    def __init__(
+        self,
+        input_shape,
+        num_classes,
+        hidden_layers=[64],
+        dropout_rate=0.4,
+    ):
+        """
+        Input: (i) input_shape: Input dimension.
+               (ii) num_classes: Number of output classes.
+               (iii) hidden_layers: List containing the number of neurons in each hidden layer. The length of the list determines the amount of hidden layers in the model.
+               (iv) dropout_rate: Dropout Rate for each hidden layer. Default is 0.4.
+        """
+        self.input_shape = input_shape
+        self.num_classes = num_classes
+        self.hidden_layers = hidden_layers
+        self.dropout_rate = dropout_rate
+        self.model = NN_base(
+            self.input_shape, self.num_classes, self.hidden_layers, self.dropout_rate
+        )
+
+    def fit(
+        self,
+        X,
+        y,
+        proportion_train=0.7,
+        epochs=500,
+        lr=0.001,
+        gamma=0.99,
+        batch_size=32,
+        step_size=5,
+        weight_decay=0,
+        verbose=0,
+        patience=30,
+        scale=False,
+        random_seed_split=0,
+        random_seed_fit=1250,
+    ):
+        """
+        Fit MC Dropout Classifier.
+
+        Input: (i) X (np.ndarray or torch.Tensor): Training input data.
+               (ii) y (np.ndarray or torch.Tensor): Training target data.
+               (iii) proportion_train (float): Proportion of data to be used for training (the rest for validation). Default is 0.7.
+               (iv) epochs (int): Number of epochs for training. Default is 500.
+               (v) lr (float): Learning rate for the optimizer. Default is 0.001.
+               (vi) gamma (float): Gamma value for scheduler. Default is 0.99
+               (vii) batch_size (int): Batch size. Default is 32.
+               (viii) step_size (int): Step size for scheduler. Default is 5.
+               (ix) weight_decay (float): Optimizer weight decay parameter. Default is 0.
+               (x) verbose (int): Verbosity level (0, 1, or 2). If set to 0, does not print anything, if 1, prints the average loss of each epoch and if 2, prints the model learning curve at end of fitting.
+               (xi) patience (int): Number of epochs with no improvement to trigger early stopping. Default is 30.
+               (xii) scale (bool): Whether to scale or not the data. Default is False.
+               (xiii) random_seed_split (int): Random seed fixed to perform data splitting. Default is 0.
+               (xiv) random_seed_fit (int): Random seed fixed to model fitting. Default is 1250.
+
+        Output: (i) fitted MC_classifier object
+        """
+        self.optimizer = optim.Adamax(
+            self.model.parameters(), lr=lr, weight_decay=weight_decay
+        )
+        self.scheduler = optim.lr_scheduler.StepLR(
+            self.optimizer, step_size=step_size, gamma=gamma
+        )
+
+        # Splitting data into train and validation
+        x_train, x_val, y_train, y_val = train_test_split(
+            X, y, test_size=1 - proportion_train, random_state=random_seed_split
+        )
+
+        # checking if scaling is needed
+        if scale:
+            self.scaler = StandardScaler()
+            self.scaler.fit(x_train)
+            x_train = self.scaler.transform(x_train)
+            x_val = self.scaler.transform(x_val)
+            self.scale = True
+        else:
+            self.scale = False
+
+        # checking if is an instance of numpy
+        if isinstance(X, np.ndarray) or isinstance(y, np.ndarray):
+            x_train, x_val = (
+                torch.tensor(x_train, dtype=torch.float32),
+                torch.tensor(x_val, dtype=torch.float32),
+            )
+            y_train, y_val = (
+                torch.tensor(y_train, dtype=torch.float32).view(-1, 1),
+                torch.tensor(y_val, dtype=torch.float32).view(-1, 1),
+            )
+
+        # Training and validation
+        train_dataset = TensorDataset(
+            x_train.clone().detach().float(),
+            (
+                y_train.clone().detach().float()
+                if isinstance(y_train, torch.Tensor)
+                else torch.tensor(y_train, dtype=torch.float32)
+            ),
+        )
+        val_dataset = TensorDataset(
+            x_val.clone().detach().float(),
+            (
+                y_val.clone().detach().float()
+                if isinstance(y_val, torch.Tensor)
+                else torch.tensor(y_val, dtype=torch.float32)
+            ),
+        )
+
+        # Setting batch size
+        batch_size_train = int(proportion_train * batch_size)
+        batch_size_val = int((1 - proportion_train) * batch_size)
+        train_loader = DataLoader(
+            train_dataset, batch_size=batch_size_train, shuffle=True
+        )
+        val_loader = DataLoader(val_dataset, batch_size=batch_size_val, shuffle=False)
+
+        losses_train = []
+        losses_val = []
+
+        # early stopping
+        best_val_loss = float("inf")
+        counter = 0
+
+        torch.manual_seed(random_seed_fit)
+        torch.cuda.manual_seed(random_seed_fit)
+        # Training loop
+        for epoch in tqdm(range(epochs), desc="Fitting MC Dropout Classifier"):
+            self.model.train()
+            train_loss_epoch = 0
+
+            # Looping through batches
+            for x_batch, y_batch in train_loader:
+                self.optimizer.zero_grad()
+                output_train = self.model(x_batch)  # Network output
+                loss_train = F.cross_entropy(output_train, y_batch.long().view(-1))
+                loss_train.backward()
+                self.optimizer.step()
+                train_loss_epoch += loss_train.item()
+
+            # Computing validation loss
+            self.model.eval()
+            val_loss_epoch = 0
+            with torch.no_grad():
+                for x_batch, y_batch in val_loader:
+                    output_val = self.model(x_batch)  # Network output
+                    loss_val = F.cross_entropy(output_val, y_batch.long().view(-1))
+                    val_loss_epoch += loss_val.item()
+
+            # average loss by epoch
+            train_loss_epoch /= len(train_loader)
+            val_loss_epoch /= len(val_loader)
+            losses_train.append(train_loss_epoch)
+            losses_val.append(val_loss_epoch)
+
+            self.scheduler.step()
+
+            if verbose == 1:
+                print(
+                    f"Epoch {epoch}, Train Loss: {train_loss_epoch:.4f}, Validation Loss: {val_loss_epoch:.4f}"
+                )
+
+            # Early stopping
+            if val_loss_epoch < best_val_loss:
+                best_val_loss = val_loss_epoch
+                counter = 0
+            else:
+                counter += 1
+                if counter >= patience:
+                    print(
+                        f"Early stopping in epoch {epoch} with best validation loss: {best_val_loss:.4f}"
+                    )
+                    break
+
+        if verbose == 2:
+            fig, ax = plt.subplots()
+            ax.set_title("Training and Validation Loss")
+            ax.set_xlabel("Epoch")
+            ax.set_ylabel("Loss")
+
+            epochs_completed = len(losses_train)
+            ax.set_xlim(0, epochs_completed)
+
+            ax.plot(
+                range(epochs_completed), losses_train, label="Train Loss", color="blue"
+            )
+            ax.plot(
+                range(epochs_completed),
+                losses_val,
+                label="Validation Loss",
+                color="green",
+                linestyle="--",
+            )
+            plt.legend(loc="upper right")
+            plt.show()
+
+        return self
+
+    def predict_mc_dropout(self, x, num_samples=100, return_mean=False):
+        """
+        Make predictions with MC Dropout.
+
+        Input:
+            (i) x: Input data.
+            (ii) num_samples: Number of Monte Carlo samples. Default is 100.
+            (iii) return_mean: Whether to return the mean of the predictions. Default is False.
+
+        Output:
+            (i) Tuple containing the stacked tensors of the predictions or their means if return_mean is True.
+        """
+        if isinstance(x, np.ndarray):
+            if self.scale:
+                x = self.scaler.transform(x)
+            x = torch.tensor(x, dtype=torch.float32)
+
+        self.model.eval()
+        self.model.train()
+
+        predictions = []
+
+        for _ in range(num_samples):
+            with torch.no_grad():
+                pred = F.softmax(self.model(x), dim=1)
+                predictions.append(pred)
+
+        predictions = torch.stack(predictions)
+
+        if return_mean:
+            mean_predictions = torch.mean(predictions, dim=0)
+            return mean_predictions
+
+        return predictions
+
+    def predict_pmf(self, X_test, num_samples=100, random_seed=45):
+        probs = (
+            self.predict_mc_dropout(
+                X_test,
+                num_samples,
+                return_mean=True,
+            )
+            .detach()
+            .numpy()
+        )
+
+        return probs
 
 
 #### GP models
@@ -1261,7 +1765,74 @@ class BART_model(BaseEstimator):
                         progressbar=self.progressbar,
                     )
             self.model_bart = model_bart
+
+        # categorical regression for cases like APS
+        elif self.type == "categorical":
+            # treating categorical data accordingly
+            # converting y to integer
+            if y.dtype != np.int64:
+                y = y.astype(np.int64)
+            n_cat = np.unique(y).shape[0]
+
+            # fitting model
+            with pm.Model() as model_bart:
+                self.X_data = pm.Data("data_X", X)
+                mu = pmb.BART(
+                    "mu", self.X_data, y, m=self.m, shape=(n_cat, self.X_data.shape[0])
+                )
+
+                theta = pm.Deterministic("theta_obs", pm.math.softmax(mu, axis=0))
+
+                # Likelihood (sampling distribution) of observations
+                y_obs = pm.Categorical("y_obs", p=theta.T, observed=y)
+
+                # running MCMC in the training sample
+                self.mc_sample = pm.sample(
+                    n_sample,
+                    chains=self.n_chains,
+                    random_seed=random_seed,
+                    cores=self.n_cores,
+                    progressbar=self.progressbar,
+                )
+            self.model_bart = model_bart
         return self
+
+    def predict_pmf(self, X_test, random_seed=0):
+        """
+        Predict the probability mass function (PMF) for the given test data.
+
+        Input:
+        (i) X_test (array-like): The input features for the test data.
+        (ii) y_test (array-like): The true target values for the test data.
+        (iii) random_seed (int, optional): The random seed for reproducibility of the posterior predictive sampling. Default is 0.
+
+        Output:
+        (i) pmf_array (numpy.ndarray): An array containing the PMF values for the test data, with rows indicating the samples and columns indicating the classes.
+        """
+        if self.type_X:
+            X_test = X_test.astype(float)
+
+        with self.model_bart:
+            self.X_data.set_value(X_test)
+            posterior_predictive_test = pm.sample_posterior_predictive(
+                trace=self.mc_sample,
+                random_seed=random_seed,
+                var_names=["theta_obs"],
+                predictions=True,
+                progressbar=True,
+            )
+
+        pred_sample = (
+            az.extract(
+                posterior_predictive_test,
+                group="predictions",
+                var_names=["theta_obs"],
+            )
+            .mean("sample")
+            .T.to_numpy()
+        )
+
+        return pred_sample
 
     def predict_cdf(self, X_test, y_test, random_seed=0):
         """
