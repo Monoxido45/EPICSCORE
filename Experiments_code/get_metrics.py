@@ -1,7 +1,6 @@
 # Code for generating all data results
 import pandas as pd
 import os
-import numpy as np
 
 original_path = os.getcwd()
 folder_path = "/Experiments_code/pickle_files/"

@@ -5,7 +5,6 @@ from Epistemic_CP.utils import (
     average_coverage,
     average_interval_score_loss,
     compute_interval_length,
-    corr_coverage_widths,
 )
 
 # base packages

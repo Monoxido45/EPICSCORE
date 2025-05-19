@@ -6,15 +6,13 @@ import os
 from torchvision import transforms
 from sklearn.model_selection import train_test_split
 import gc
-from copy import deepcopy
 
 # MDN method and APS score and method
-from Epistemic_CP.epistemic_cp import ECP_split, APSSplit, ECP_classification
+from Epistemic_CP.epistemic_cp import ECP_split, APSSplit
 from Epistemic_CP.scores import APSScore
 
 # for anomaly detection
 from sklearn.neighbors import LocalOutlierFactor
-from sklearn.metrics import accuracy_score
 
 # feature extraction libraries
 from torchvision.models import resnet34, ResNet34_Weights
@@ -28,8 +26,6 @@ from sklearn.manifold import TSNE
 
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-import textwrap
-from sklearn.model_selection import ShuffleSplit
 
 import tarfile
 import urllib.request

@@ -1,13 +1,10 @@
 import numpy as np
 import pandas as pd
 from sklearn.datasets import make_regression
-from sklearn.model_selection import train_test_split
-from sklearn.linear_model import LinearRegression
 import matplotlib.pyplot as plt
 from Epistemic_CP.epistemic_models import MDN_model, BART_model, GPApprox_model
 
 from tqdm import tqdm
-from sklearn.preprocessing import StandardScaler
 from sklearn.neighbors import KNeighborsRegressor
 import time
 from matplotlib.ticker import LogLocator

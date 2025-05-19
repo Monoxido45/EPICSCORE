@@ -11,8 +11,8 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     url=".",
-    author="Anonymous",
-    author_email=".",
+    author="Luben M. C. Cabezas, Vagner S. Santos",
+    author_email="lucruz45.cab@gmail.com",
     packages=["Epistemic_CP"],
     license="MIT",
     keywords=[

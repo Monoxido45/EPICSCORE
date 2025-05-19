@@ -118,7 +118,7 @@ class uacqr:
         self.B = B
         self.q_lower = q_lower
         self.q_upper = q_upper
-        self.alpha = 0.1
+        self.alpha = alpha
         self.transform = transform
         self.inv_transform = inv_transform
         self.model_type = model_type
