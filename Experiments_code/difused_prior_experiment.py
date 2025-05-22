@@ -307,8 +307,9 @@ for i in tqdm(range(alpha_grid.shape[0]), desc="Computing SMIS for each alpha"):
 # Plotting SMIS vs Alpha
 plt.figure(figsize=(10, 6))
 plt.plot(alpha_grid, smis_array, marker="o", linestyle="-", color="blue")
-plt.xlabel(r"$\alpha$")
+plt.xlabel(r"$\beta$")
 plt.ylabel("AISL (Average Interval Score Loss)")
-plt.title(r"AISL vs $\alpha$")
+plt.title(r"AISL vs $\beta$")
 plt.grid(True)
+plt.rcParams.update({"font.size": 16})
 plt.show()
