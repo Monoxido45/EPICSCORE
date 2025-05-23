@@ -232,6 +232,13 @@ plt.ylim(5, 1000)  # Increase y-axis limits
 plt.xlim(100, 7.5 * 10000)
 # Expand the size of the plot
 plt.gcf().set_size_inches(12, 8)
+# Increase font sizes
+plt.rcParams.update({"font.size": 16})  # Increase overall font size
+plt.legend(fontsize=14)  # Increase legend font size
+# Set the font to Times New Roman or serif
+plt.rcParams["font.family"] = "serif"
+
 # Show the plot
 plt.tight_layout()
+plt.savefig("benchmarking_running_times.png", dpi=300)
 plt.show()

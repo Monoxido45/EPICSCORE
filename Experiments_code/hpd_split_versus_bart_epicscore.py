@@ -183,11 +183,11 @@ axes[0].fill_between(
     color="blue",
     alpha=0.3,
 )
-
+# Increase font size and change to serif
 axes[0].scatter(X_test, y_test, color="black", alpha=0.5, s=10)
 axes[0].set_xlabel("x")
 axes[0].set_ylabel("y")
-axes[0].set_title("Prediction Regions: HPD")
+axes[0].set_title("HPD")
 
 # Plotting the prediction regions for EPICSCORE
 y_inf, y_sup = np.zeros(x_grid.shape[0]), np.zeros(x_grid.shape[0])
@@ -209,142 +209,10 @@ axes[1].fill_between(
 )
 axes[1].scatter(X_test, y_test, color="black", alpha=0.5, s=10)
 axes[1].set_xlabel("x")
-axes[1].set_title("Prediction Regions: EPICSCORE")
+axes[1].set_title("EPICSCORE", fontweight="bold")
 
+plt.rcParams.update({"font.size": 35})
 plt.tight_layout()
-plt.show()
-
-# computing quantile for HPD split
-hpd_quantile = np.quantile(
-    hpd_score,
-    np.ceil((n + 1) * (alpha)) / n,
-)
-
-# cutoffs for grid
-t_cutoff_hpd = model.predict_cdf_cutoff(
-    x_grid,
-    cutoff=hpd_quantile,
-    num_samples=1000,
-)
-
-# fitting BART to density by hand
-# computing scores
-dens_score = model.predict(X_calib, y_calib)
-
-# splitting data
-(
-    X_calib_train,
-    X_calib_test,
-    scores_calib_train,
-    scores_calib_test,
-) = train_test_split(
-    X_calib,
-    dens_score.numpy(),
-    test_size=0.45,
-    random_state=45,
-)
-
-# fitting BART model
-bart_epistemic = BART_model(
-    m=50,
-    type="gamma",
-    var="heteroscedastic",
-    n_cores=6,
-    progressbar=True,
-    alpha=0.9,
-)
-
-bart_epistemic.fit(
-    X_calib_train,
-    scores_calib_train,
-    n_sample=1000,
-    random_seed=750,
-)
-
-s_prime_calibration = bart_epistemic.predict_cdf(
-    X_calib_test,
-    y_test=scores_calib_test,
-    random_seed=750,
-)
-
-# computing cutoff
-t_cutoff = np.quantile(s_prime_calibration, alpha)
-
-# computing cutoff across grid
-t_inverse_bart = bart_epistemic.predict_cutoff(
-    x_grid,
-    t=t_cutoff,
-    random_seed=125,
-)
-
-# predicting conditional densities
-y_grid = np.linspace(-6, 6, 3000)
-# using gridding to compute density for each x_grid
-densities = model.predict_mixture_density(
-    x_grid,
-    torch.tensor(y_grid),
-)
-
-# Creating dictionaries for HPD and EPICSCORE
-hpd_dict = {}
-epicscore_dict = {}
-for i, x_val in enumerate(x_grid.flatten()):
-    # Select densities lower than t_cutoff_hpd for HPD
-    hpd_dict[x_val] = y_grid[densities[i] >= t_cutoff_hpd[i]]
-
-    # Select densities lower than t_inverse_test for EPICSCORE
-    if len(y_grid[densities[i] >= t_inverse_bart[i]]) == 0:
-        print(f"Empty array for x = {x_val}")
-    epicscore_dict[x_val] = y_grid[densities[i] >= t_inverse_bart[i]]
-
-
-# Plotting the prediction regions using subplots
-fig, axes = plt.subplots(1, 2, figsize=(16, 6), sharey=True)
-
-# Plotting the prediction regions for HPD
-y_inf, y_sup = np.zeros(x_grid.shape[0]), np.zeros(x_grid.shape[0])
-
-i = 0
-for x_val, y_vals in hpd_dict.items():
-    y_inf[i] = np.min(y_vals)
-    y_sup[i] = np.max(y_vals)
-    i += 1
-
-# Adding scatter points for the test data
-axes[0].fill_between(
-    x_grid.flatten(),
-    y_inf,
-    y_sup,
-    color="blue",
-    alpha=0.3,
-)
-
-axes[0].scatter(X_test, y_test, color="black", alpha=0.5, s=10)
-axes[0].set_xlabel("x")
-axes[0].set_ylabel("y")
-axes[0].set_title("Prediction Regions: HPD")
-
-# Plotting the prediction regions for EPICSCORE
-y_inf, y_sup = np.zeros(x_grid.shape[0]), np.zeros(x_grid.shape[0])
-
-i = 0
-for x_val, y_vals in epicscore_dict.items():
-    if len(y_vals) == 0:
-        print(x_val)
-    y_inf[i] = np.min(y_vals)
-    y_sup[i] = np.max(y_vals)
-    i += 1
-
-axes[1].fill_between(
-    x_grid.flatten(),
-    y_inf,
-    y_sup,
-    color="red",
-    alpha=0.3,
-)
-axes[1].scatter(X_test, y_test, color="black", alpha=0.5, s=10)
-axes[1].set_xlabel("x")
-axes[1].set_title("Prediction Regions: EPICSCORE")
-
-plt.tight_layout()
+# Save the figure to a file
+fig.savefig("HPD_versus_epicscore.png", dpi=300, bbox_inches="tight")
 plt.show()

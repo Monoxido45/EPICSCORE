@@ -169,6 +169,7 @@ pred_ecp_bart_con = ecp_bart_con.predict(x_grid, random_seed=rng)
 
 # Plotting prediction intervals
 plt.rcParams.update({"font.size": 32})
+plt.rcParams.update({"font.family": "serif"})
 fig, axs = plt.subplots(1, 2, figsize=(15, 10))
 
 # Plot for Regression Split
@@ -210,10 +211,13 @@ for ax in axs.flat:
     ax.set_ylim(ylim)
 # Increase font size
 for ax in axs.flat:
-    ax.title.set_fontsize(30)
-    ax.xaxis.label.set_fontsize(30)
-    ax.yaxis.label.set_fontsize(30)
+    ax.title.set_fontsize(20)
+    ax.xaxis.label.set_fontsize(20)
+    ax.yaxis.label.set_fontsize(20)
+    ax.tick_params(axis="both", which="major", labelsize=14)
+    ax.tick_params(axis="both", which="minor", labelsize=14)
 plt.tight_layout()
+# Set font to serif for all plots
 plt.show()
 
 # Compute SMIS (Set Membership Indices) for each method on the testing set using AISL
