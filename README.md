@@ -1,5 +1,7 @@
 # Epistemic Conformal Score (EPICSCORE).
-Here we provide an implementation of EPICSCORE and notebooks to reproduce the figures and tables from the paper **Epistemic Uncertainty in Conformal Scores: A Unified Approach**.
+Here we provide an implementation of EPICSCORE and notebooks to reproduce the figures and tables from the paper **Epistemic Uncertainty in Conformal Scores: A Unified Approach** ([check paper here](https://arxiv.org/abs/2502.06995).
+
+```
 
 We demonstrate how to use our method on regression and quantile regression base models in two demo notebooks.
 
