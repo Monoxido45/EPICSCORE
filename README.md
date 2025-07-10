@@ -1,5 +1,5 @@
 # Epistemic Conformal Score (EPICSCORE).
-Here we provide an implementation of EPICSCORE and notebooks to reproduce the figures and tables from the paper **Epistemic Uncertainty in Conformal Scores: A Unified Approach** ([check paper here](https://arxiv.org/abs/2502.06995).
+Here we provide an implementation of EPICSCORE and notebooks to reproduce the figures and tables from the paper **Epistemic Uncertainty in Conformal Scores: A Unified Approach** ([check paper here](https://arxiv.org/abs/2502.06995)).
 
 ```
 
